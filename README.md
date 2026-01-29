@@ -237,6 +237,9 @@ The MCP Server exposes tools that AI can call to interact with Decommerce.
 
 ### MCP Server Module Structure
 
+<details>
+<summary>View MCP Server Module Structure</summary>
+
 ```
 src/mcp/
 ├── mcp.module.ts                    # NestJS module
@@ -267,6 +270,8 @@ src/mcp/
 └── guards/
     └── mcp-rate-limit.guard.ts
 ```
+
+</details>
 
 ### MCP Tools for App Management
 
@@ -364,6 +369,9 @@ We chose **configuration-based apps** because:
 
 ### App Framework Module Structure
 
+<details>
+<summary>View App Framework Module Structure</summary>
+
 ```
 src/app-framework/
 ├── app-framework.module.ts          # NestJS module
@@ -419,6 +427,8 @@ src/app-framework/
     ├── app-config.dto.ts            # App configuration schema
     └── execution-result.dto.ts      # Execution result format
 ```
+
+</details>
 
 ### Understanding the Components
 
@@ -491,6 +501,9 @@ The `apps` table stores the app configuration and status. Each row is one micro-
 - `run_count` / `error_count` — Execution statistics for monitoring
 - `last_run_at` — When the app last executed (for debugging)
 
+<details>
+<summary>View App Entity Code</summary>
+
 ```typescript
 @Entity('apps')
 export class App extends EntityHelper {
@@ -547,12 +560,17 @@ export class App extends EntityHelper {
 // Example: appRepository.find({ where: { tenant_id: currentTenantId } })
 ```
 
+</details>
+
 #### App Execution Entity
 
 The `app_executions` table logs every time an app runs. This provides:
 - **Audit trail** — See exactly when each app ran and what it did
 - **Debugging** — If something fails, check the error message and result
 - **Monitoring** — Track success rates, processing times, items handled
+
+<details>
+<summary>View App Execution Entity Code</summary>
 
 ```typescript
 @Entity('app_executions')
@@ -582,6 +600,8 @@ export class AppExecution extends EntityHelper {
   error_message: string;
 }
 ```
+
+</details>
 
 ---
 
@@ -791,6 +811,9 @@ data: {"message_id": "msg_xyz789", "usage": {"input_tokens": 150, "output_tokens
 
 #### Chat Controller Implementation
 
+<details>
+<summary>View Chat Controller Implementation</summary>
+
 ```typescript
 @Controller('api/v1/ai-apps')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -857,6 +880,8 @@ Always be helpful and explain your actions clearly.`;
   }
 }
 ```
+
+</details>
 
 #### Tool Confirmation Flow
 
@@ -1107,6 +1132,9 @@ type ConditionOperator =
 
 ### Example: Low-Quality Post Detector
 
+<details>
+<summary>View Low-Quality Post Detector Config</summary>
+
 ```json
 {
   "app": {
@@ -1179,7 +1207,12 @@ type ConditionOperator =
 }
 ```
 
+</details>
+
 ### Example: Weekly Engagement Digest
+
+<details>
+<summary>View Weekly Engagement Digest Config</summary>
 
 ```json
 {
@@ -1247,6 +1280,8 @@ type ConditionOperator =
   ]
 }
 ```
+
+</details>
 
 ---
 
@@ -1896,6 +1931,9 @@ const BLOCKED_PATTERNS = [
 
 #### Webhook Action Security
 
+<details>
+<summary>View Webhook Security Implementation</summary>
+
 ```typescript
 class WebhookAction implements ActionExecutor {
   async execute(params: WebhookParams, context: ExecutionContext) {
@@ -1937,6 +1975,8 @@ class WebhookAction implements ActionExecutor {
   }
 }
 ```
+
+</details>
 
 #### Webhook Limits
 
@@ -2051,6 +2091,9 @@ type DelaySpec = string | {
 
 **How Delayed Triggers Work:**
 
+<details>
+<summary>View Delayed Trigger Implementation</summary>
+
 ```typescript
 @Entity('delayed_executions')
 export class DelayedExecution {
@@ -2130,6 +2173,8 @@ export class DelayedTriggerService {
   }
 }
 ```
+
+</details>
 
 **Cancellation:** If the user completes a specific action (like making a purchase), you can cancel remaining delayed executions:
 
@@ -2251,6 +2296,9 @@ interface TriggerFilterConfig {
 
 #### Filter Evaluation
 
+<details>
+<summary>View Filter Evaluation Code</summary>
+
 ```typescript
 class TriggerFilterEvaluator {
   matches(filter: TriggerFilterConfig, payload: any): boolean {
@@ -2298,6 +2346,8 @@ class TriggerFilterEvaluator {
 }
 ```
 
+</details>
+
 ### Shopify Webhook Integration
 
 Shopify events reach the App Framework through the existing Shopify webhook integration. Here's how it works:
@@ -2327,6 +2377,9 @@ const SHOPIFY_WEBHOOKS = [
 #### Webhook Handler
 
 The existing Shopify controller receives webhooks and translates them to platform events:
+
+<details>
+<summary>View Shopify Webhook Handler</summary>
 
 ```typescript
 @Controller('webhooks/shopify')
@@ -2379,6 +2432,8 @@ export class ShopifyWebhookController {
 }
 ```
 
+</details>
+
 #### Matching Shopify Customers to Platform Users
 
 To link Shopify orders to platform users:
@@ -2417,6 +2472,9 @@ class ShopifyConnector {
 
 ### Scheduler Implementation
 
+<details>
+<summary>View Scheduler Implementation</summary>
+
 ```typescript
 @Injectable()
 export class AppSchedulerService implements OnModuleInit {
@@ -2451,7 +2509,12 @@ export class AppSchedulerService implements OnModuleInit {
 }
 ```
 
+</details>
+
 ### Event Listener Implementation
+
+<details>
+<summary>View Event Listener Implementation</summary>
 
 ```typescript
 @Injectable()
@@ -2483,6 +2546,8 @@ export class AppEventListenerService {
 }
 ```
 
+</details>
+
 ---
 
 ## Execution Safeguards
@@ -2494,6 +2559,9 @@ This section defines safeguards to prevent runaway apps, resource exhaustion, an
 An app should not run multiple times simultaneously. This prevents data corruption and resource contention.
 
 **Implementation: Execution Lock**
+
+<details>
+<summary>View Execution Lock Implementation</summary>
 
 ```typescript
 interface ExecutionLock {
@@ -2529,6 +2597,8 @@ class AppExecutorService {
 }
 ```
 
+</details>
+
 **Lock Configuration:**
 | Setting | Value | Description |
 |---------|-------|-------------|
@@ -2552,6 +2622,9 @@ These limits prevent resource exhaustion:
 | `MAX_CONSECUTIVE_ERRORS` | 5 | Auto-pause app after consecutive failures |
 
 ### Enforcement
+
+<details>
+<summary>View Enforcement Code</summary>
 
 ```typescript
 class AppValidator {
@@ -2580,9 +2653,15 @@ class AppValidator {
 }
 ```
 
+</details>
+
 ### Runtime Safeguards
 
 **For-each loop protection:**
+
+<details>
+<summary>View ForEach Protection Code</summary>
+
 ```typescript
 class ForEachAction {
   async execute(params: ForEachParams, context: ExecutionContext) {
@@ -2612,7 +2691,13 @@ class ForEachAction {
 }
 ```
 
+</details>
+
 **Auto-pause on repeated failures:**
+
+<details>
+<summary>View Auto-Pause Code</summary>
+
 ```typescript
 class AppExecutorService {
   async handleExecutionResult(app: App, success: boolean) {
@@ -2642,6 +2727,8 @@ class AppExecutorService {
   }
 }
 ```
+
+</details>
 
 ---
 
@@ -2902,6 +2989,9 @@ interface TenantRateLimits {
 
 ### Rate Limit Enforcement
 
+<details>
+<summary>View Rate Limit Service</summary>
+
 ```typescript
 class RateLimitService {
   async checkLimit(
@@ -2930,6 +3020,8 @@ class RateLimitService {
 }
 ```
 
+</details>
+
 ### Rate Limit Response Headers
 
 API responses include rate limit info:
@@ -2943,6 +3035,9 @@ X-RateLimit-Reset: 1706540400
 ### Quota Exceeded Handling
 
 When a tenant exceeds their quota:
+
+<details>
+<summary>View Quota Exceeded Handler</summary>
 
 ```typescript
 class AppExecutorService {
@@ -2972,6 +3067,8 @@ class AppExecutorService {
   }
 }
 ```
+
+</details>
 
 ---
 
