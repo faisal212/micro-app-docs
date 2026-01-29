@@ -1009,6 +1009,9 @@ interface Message {
 
 ### Full Schema
 
+<details>
+<summary>View <code>AppConfig</code> schema (TypeScript)</summary>
+
 ```typescript
 interface AppConfig {
   // App metadata
@@ -1129,6 +1132,8 @@ type ConditionOperator =
   | 'matches'          // RegExp(value).test(field)
   | 'between';         // value[0] <= field <= value[1]
 ```
+
+</details>
 
 ### Example: Low-Quality Post Detector
 
@@ -1448,6 +1453,9 @@ AI generates config → Schema Validation → Semantic Validation → Limit Chec
 
 Validates that the configuration matches the expected TypeScript interface:
 
+<details>
+<summary>View schema validator (<code>AppConfigValidator</code>)</summary>
+
 ```typescript
 class AppConfigValidator {
   validateSchema(config: unknown): ValidationResult {
@@ -1482,9 +1490,14 @@ class AppConfigValidator {
 }
 ```
 
+</details>
+
 ### Semantic Validation
 
 Validates that the configuration makes logical sense:
+
+<details>
+<summary>View semantic validator (<code>SemanticValidator</code>)</summary>
 
 ```typescript
 class SemanticValidator {
@@ -1536,9 +1549,14 @@ class SemanticValidator {
 }
 ```
 
+</details>
+
 ### Limit Validation
 
 Ensures the app is within resource limits:
+
+<details>
+<summary>View limit validator (<code>LimitValidator</code>)</summary>
 
 ```typescript
 class LimitValidator {
@@ -1573,9 +1591,14 @@ class LimitValidator {
 }
 ```
 
+</details>
+
 ### Validation Response
 
 When validation fails, AI receives detailed error messages:
+
+<details>
+<summary>View <code>ValidationResult</code> format + example</summary>
 
 ```typescript
 interface ValidationResult {
@@ -1597,6 +1620,8 @@ interface ValidationResult {
   ]
 }
 ```
+
+</details>
 
 ---
 
@@ -1878,6 +1903,9 @@ interface SortConfig {
 
 ### Action Interface
 
+<details>
+<summary>View <code>ActionExecutor</code> interface</summary>
+
 ```typescript
 interface ActionExecutor {
   type: string;
@@ -1900,6 +1928,8 @@ interface ExecutionContext {
 }
 ```
 
+</details>
+
 ### Webhook Security
 
 The `webhook` action calls external URLs, which requires strict security controls to prevent SSRF (Server-Side Request Forgery) and other attacks.
@@ -1907,6 +1937,9 @@ The `webhook` action calls external URLs, which requires strict security control
 #### URL Allowlist
 
 Webhooks can only call pre-approved domains:
+
+<details>
+<summary>View webhook allowlist / blocklist config</summary>
 
 ```typescript
 interface WebhookConfig {
@@ -1928,6 +1961,8 @@ const BLOCKED_PATTERNS = [
   'metadata.google.internal',  // GCP metadata
 ];
 ```
+
+</details>
 
 #### Webhook Action Security
 
@@ -1991,6 +2026,9 @@ class WebhookAction implements ActionExecutor {
 
 All webhook calls are logged for audit:
 
+<details>
+<summary>View <code>WebhookLog</code> interface</summary>
+
 ```typescript
 interface WebhookLog {
   app_id: number;
@@ -2004,6 +2042,8 @@ interface WebhookLog {
   timestamp: Date;
 }
 ```
+
+</details>
 
 ---
 
@@ -2023,6 +2063,9 @@ interface WebhookLog {
 The `delayed` trigger is specifically designed for multi-step sequences like welcome email series. It fires at specified intervals after an event occurs.
 
 **Use case:** Send welcome emails on Day 1, Day 3, and Day 7 after signup.
+
+<details>
+<summary>View <code>DelayedTriggerConfig</code> schema</summary>
 
 ```typescript
 interface DelayedTriggerConfig {
@@ -2044,6 +2087,8 @@ type DelaySpec = string | {
 // "24h" = 24 hours after event
 // "30m" = 30 minutes after event
 ```
+
+</details>
 
 **Example: Welcome Email Series**
 
@@ -2203,6 +2248,9 @@ Event triggers can include filters to only fire for specific events. This preven
 
 #### Basic Filter Syntax
 
+<details>
+<summary>View event trigger filter schema</summary>
+
 ```typescript
 interface EventTriggerConfig {
   type: 'event';
@@ -2215,6 +2263,8 @@ interface TriggerFilterConfig {
   [field: string]: any | FilterOperator;
 }
 ```
+
+</details>
 
 #### Examples
 
@@ -2738,6 +2788,9 @@ class AppExecutorService {
 
 Failed executions can be automatically retried with exponential backoff:
 
+<details>
+<summary>View <code>RetryConfig</code></summary>
+
 ```typescript
 interface RetryConfig {
   enabled: boolean;
@@ -2751,9 +2804,14 @@ interface RetryConfig {
 // Attempt 1: 1s, Attempt 2: 2s, Attempt 3: 4s, ...
 ```
 
+</details>
+
 ### Partial Execution Handling
 
 When an execution fails mid-way through a for_each loop:
+
+<details>
+<summary>View <code>ExecutionCheckpoint</code></summary>
 
 ```typescript
 interface ExecutionCheckpoint {
@@ -2765,6 +2823,8 @@ interface ExecutionCheckpoint {
 }
 ```
 
+</details>
+
 **Resume behavior:**
 - If `can_resume: true`, retry continues from `last_processed_index + 1`
 - If `can_resume: false`, entire execution restarts (actions are not idempotent)
@@ -2772,6 +2832,9 @@ interface ExecutionCheckpoint {
 ### Idempotency Markers
 
 For actions that should not be repeated (like sending emails):
+
+<details>
+<summary>View <code>IdempotencyKey</code> + usage example</summary>
 
 ```typescript
 interface IdempotencyKey {
@@ -2794,6 +2857,8 @@ class SendEmailAction {
   }
 }
 ```
+
+</details>
 
 ---
 
@@ -2935,6 +3000,9 @@ class SendEmailAction {
 
 ### Global Rate Limits (Environment Variables)
 
+<details>
+<summary>View global rate limit env vars</summary>
+
 ```bash
 # MCP Server
 MCP_ENABLED=true
@@ -2953,9 +3021,14 @@ AI_MAX_TOKENS=2000
 AI_RATE_LIMIT_PER_MINUTE=60  # Global rate limit
 ```
 
+</details>
+
 ### Per-Tenant Rate Limits
 
 Each tenant has individual rate limits to ensure fair resource allocation:
+
+<details>
+<summary>View <code>TenantRateLimits</code> interface</summary>
 
 ```typescript
 interface TenantRateLimits {
@@ -2977,6 +3050,8 @@ interface TenantRateLimits {
   override_until?: Date;
 }
 ```
+
+</details>
 
 ### Rate Limit Tiers
 
