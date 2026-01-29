@@ -42,7 +42,7 @@ This document specifies a system that allows **AI to create micro-apps on the De
 
 ## Vision & Goals
 
-### Allan's Vision
+### Vision
 
 > "Unlike Shopify where human developers build apps, here the AI itself creates these micro-apps. Admin asks AI → AI builds the app on the fly → app is ready to use."
 
