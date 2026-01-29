@@ -297,7 +297,64 @@ src/mcp/
 
 ## Part 2: App Framework
 
-The App Framework is the engine that stores, runs, and manages micro-apps.
+The App Framework is the **runtime engine** that stores, schedules, executes, and monitors micro-apps. While the MCP Server lets AI create apps, the App Framework is what actually runs them.
+
+### What the App Framework Does
+
+Think of the App Framework as a **workflow automation engine** with four core responsibilities:
+
+1. **Storage** — Saves app configurations as JSON in the database (not code)
+2. **Triggering** — Knows when to run each app (scheduled time, event fired, manual click)
+3. **Execution** — Runs the app's data pipeline and actions
+4. **Monitoring** — Logs every execution for debugging and auditing
+
+### The Building Blocks Concept
+
+Apps are built from **three types of building blocks** that AI combines:
+
+| Building Block | What It Does | Examples |
+|----------------|--------------|----------|
+| **Connectors** | Fetch data from the platform | Get users, get posts, get Shopify orders |
+| **Actions** | Do something with the data | Send email, create post, award XP, flag content |
+| **Triggers** | Decide when the app runs | Every Monday 9am, when post is created, when admin clicks Run |
+
+**The key insight:** AI doesn't write code — it assembles these pre-built blocks into a configuration. The framework then executes that configuration safely and predictably.
+
+### How an App Executes
+
+When an app runs (triggered by schedule, event, or manual click), here's what happens:
+
+```
+1. TRIGGER fires (e.g., Monday 9am)
+         ↓
+2. Load app configuration from database
+         ↓
+3. DATA PIPELINE runs:
+   - Connector 1: Fetch active users → [1000 users]
+   - Connector 2: Fetch engagement stats → [user stats]
+   - Connector 3: Fetch Shopify orders → [recent orders]
+   - Merge/filter/transform data as needed
+         ↓
+4. ACTIONS execute:
+   - For each user:
+     - AI generates personalized email content
+     - Send email via SendGrid
+         ↓
+5. LOG execution results (success/failure, items processed, errors)
+```
+
+### Why Configuration-Based Apps Matter
+
+| Approach | Risk | Benefit |
+|----------|------|---------|
+| AI writes actual code | High — code could do anything | Maximum flexibility |
+| AI generates configuration | Low — framework controls what's possible | Safe, predictable, auditable |
+
+We chose **configuration-based apps** because:
+- AI can only use pre-built connectors and actions (no arbitrary code execution)
+- Every app is inspectable — admins can see exactly what it does
+- Execution is sandboxed — apps can't access anything outside defined connectors
+- Easy to pause, modify, or delete without code changes
 
 ### App Framework Module Structure
 
@@ -357,9 +414,73 @@ src/app-framework/
     └── execution-result.dto.ts      # Execution result format
 ```
 
+### Understanding the Components
+
+#### Services (The Brain)
+
+| Service | Responsibility |
+|---------|----------------|
+| `app.service.ts` | CRUD operations — create, read, update, delete apps |
+| `app-executor.service.ts` | The execution engine — runs data pipeline → actions in sequence |
+| `app-scheduler.service.ts` | Manages cron jobs — loads scheduled apps on startup, creates/removes jobs |
+| `app-event-listener.service.ts` | Listens to platform events (user.created, post.created) and triggers matching apps |
+
+#### Connectors (Data In)
+
+Connectors are **read-only data sources**. Each connector knows how to fetch one type of data with filters:
+
+| Connector | What It Fetches | Example Filters |
+|-----------|-----------------|-----------------|
+| `users` | User records | status=Active, created_after=7d ago |
+| `user_engagement` | Calculated stats | XP this week, posts count, missions completed |
+| `posts` | Post records | room_id=5, status=Published |
+| `rooms` | Room records | room_type_id=3 |
+| `missions` | Mission records | is_active=true, mission_type=Quiz |
+| `shopify_orders` | Shopify order data | created_after=7d ago, total_gte=100 |
+| `analytics` | Aggregated metrics | Period=last_30_days |
+
+**Why separate connectors?** Each connector handles its own query logic, validation, and error handling. AI just specifies which connector to use and what filters to apply.
+
+#### Actions (Data Out)
+
+Actions are **operations that change state**. Each action knows how to do one thing:
+
+| Action | What It Does | Required Params |
+|--------|--------------|-----------------|
+| `send_email` | Send email via SendGrid | to, subject, body |
+| `create_post` | Create a post in a room | room_id, content, author_id |
+| `send_notification` | Push notification to users | user_ids, title, message |
+| `update_user` | Update user fields | user_id, fields |
+| `award_xp` | Give XP to a user | user_id, amount, reason |
+| `flag_content` | Flag post for review | content_id, reason |
+| `ai_generate` | Generate content using Claude | prompt, output_var |
+| `ai_analyze` | Analyze content using Claude | input, prompt, output_var |
+| `for_each` | Loop over items and run nested actions | items, as, do |
+| `webhook` | Call external URL | url, method, body |
+
+**Why separate actions?** Each action handles validation, error handling, and rollback. The executor just calls actions in sequence.
+
+#### Triggers (When to Run)
+
+| Trigger Type | How It Works | Use Case |
+|--------------|--------------|----------|
+| `scheduled` | Cron job runs at specified time | Weekly digest every Monday 9am |
+| `event` | Platform emits event, listener checks for matching apps | Moderate new posts, welcome new users |
+| `manual` | Admin clicks "Run" button | One-time reports, testing |
+
 ### Database Schema
 
+The App Framework uses two main tables to store apps and track their execution history.
+
 #### App Entity
+
+The `apps` table stores the app configuration and status. Each row is one micro-app.
+
+**Key fields:**
+- `config` (JSONB) — The full app configuration: trigger, data pipeline, actions. This is what AI generates.
+- `status` — ACTIVE (running), PAUSED (stopped), or ERROR (failed too many times)
+- `run_count` / `error_count` — Execution statistics for monitoring
+- `last_run_at` — When the app last executed (for debugging)
 
 ```typescript
 @Entity('apps')
@@ -398,6 +519,11 @@ export class App extends EntityHelper {
 
 #### App Execution Entity
 
+The `app_executions` table logs every time an app runs. This provides:
+- **Audit trail** — See exactly when each app ran and what it did
+- **Debugging** — If something fails, check the error message and result
+- **Monitoring** — Track success rates, processing times, items handled
+
 ```typescript
 @Entity('app_executions')
 export class AppExecution extends EntityHelper {
@@ -431,6 +557,33 @@ export class AppExecution extends EntityHelper {
 
 ## Part 3: Admin Panel AI Chatbox
 
+The AI Chatbox is the **user interface** where admins interact with AI to create and manage micro-apps. It's a React component embedded in the admin panel.
+
+### How the Chatbox Works
+
+1. **Admin types a request** in natural language (e.g., "Create an app that sends weekly emails")
+2. **Frontend sends request** to backend API endpoint
+3. **Backend forwards to Claude API** with MCP tools available
+4. **Claude decides what to do** — might call `create_app` tool, or ask clarifying questions
+5. **Response streams back** to the chatbox in real-time
+6. **If app is created**, it appears in the Apps List immediately
+
+### The Conversation Flow
+
+```
+Admin: "Create an app that flags low-quality posts"
+                    ↓
+Backend: Sends to Claude with system prompt + MCP tools
+                    ↓
+Claude: Understands intent, generates app config, calls create_app tool
+                    ↓
+MCP Server: Validates config, stores in database
+                    ↓
+Claude: "I've created a Low-Quality Post Detector app. It will..."
+                    ↓
+Frontend: Shows response + new app in list
+```
+
 ### Frontend Components
 
 ```
@@ -456,6 +609,18 @@ admin-panel/src/
 └── services/
     └── ai-apps.service.ts           # API calls to backend
 ```
+
+### Component Responsibilities
+
+| Component | What It Does |
+|-----------|--------------|
+| `AIChatbox.tsx` | Main chat UI — input box, message list, streaming response display |
+| `ChatMessage.tsx` | Renders individual messages (user vs AI styling, markdown support) |
+| `AppConfirmation.tsx` | Modal that shows "AI wants to create this app — confirm?" before creation |
+| `AppsList.tsx` | Grid/list of all apps with status badges, last run time, action buttons |
+| `AppCard.tsx` | Individual app card with name, description, status, quick actions |
+| `AppDetails.tsx` | Full app detail view — configuration, execution history, logs |
+| `AppLogs.tsx` | Execution log viewer with filtering, error highlighting |
 
 ### Chat Interface Design
 
