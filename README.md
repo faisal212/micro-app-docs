@@ -11,12 +11,18 @@
 7. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
 8. [Micro-App Catalog](#micro-app-catalog)
 9. [App Configuration Schema](#app-configuration-schema)
-10. [Data Connectors](#data-connectors)
-11. [Action Executors](#action-executors)
-12. [Triggers System](#triggers-system)
-13. [Implementation Phases](#implementation-phases)
-14. [Testing & Verification](#testing--verification)
-15. [Key Reference Files](#key-reference-files)
+10. [Variable Interpolation](#variable-interpolation)
+11. [App Configuration Validation](#app-configuration-validation)
+12. [Data Connectors](#data-connectors)
+13. [Logic Transformations](#logic-transformations)
+14. [Action Executors](#action-executors)
+15. [Triggers System](#triggers-system)
+16. [Execution Safeguards](#execution-safeguards)
+17. [Error Recovery & Retry](#error-recovery--retry)
+18. [Rate Limits & Quotas](#rate-limits--quotas)
+19. [Implementation Phases](#implementation-phases)
+20. [Testing & Verification](#testing--verification)
+21. [Key Reference Files](#key-reference-files)
 
 ---
 
@@ -477,8 +483,11 @@ The App Framework uses two main tables to store apps and track their execution h
 The `apps` table stores the app configuration and status. Each row is one micro-app.
 
 **Key fields:**
+- `tenant_id` — Tenant identifier for multi-tenant isolation. Each tenant only sees their own apps.
 - `config` (JSONB) — The full app configuration: trigger, data pipeline, actions. This is what AI generates.
 - `status` — ACTIVE (running), PAUSED (stopped), or ERROR (failed too many times)
+- `version` — App version for tracking changes and supporting rollback
+- `created_by` — Admin user who created the app (for audit and permissions)
 - `run_count` / `error_count` — Execution statistics for monitoring
 - `last_run_at` — When the app last executed (for debugging)
 
@@ -489,6 +498,9 @@ export class App extends EntityHelper {
   id: number;
 
   @Column()
+  tenant_id: string;  // Multi-tenant isolation - CRITICAL for security
+
+  @Column()
   name: string;
 
   @Column({ type: 'text', nullable: true })
@@ -497,8 +509,20 @@ export class App extends EntityHelper {
   @Column({ type: 'jsonb' })
   config: AppConfig;  // Full app configuration
 
+  @Column({ type: 'int', default: 1 })
+  version: number;  // Incremented on each update
+
+  @Column({ type: 'jsonb', nullable: true })
+  previous_configs: AppConfig[];  // Version history for rollback (last 5 versions)
+
   @Column({ type: 'enum', enum: AppStatus, default: AppStatus.ACTIVE })
   status: AppStatus;  // ACTIVE, PAUSED, ERROR
+
+  @Column()
+  created_by: number;  // Admin user ID who created this app
+
+  @Column({ nullable: true })
+  updated_by: number;  // Admin user ID who last modified this app
 
   @Column({ type: 'timestamp', nullable: true })
   last_run_at: Date;
@@ -509,12 +533,18 @@ export class App extends EntityHelper {
   @Column({ type: 'int', default: 0 })
   error_count: number;
 
+  @Column({ type: 'int', default: 0 })
+  consecutive_errors: number;  // Reset on success, used for auto-pause
+
   @CreateDateColumn()
   created_at: Date;
 
   @UpdateDateColumn()
   updated_at: Date;
 }
+
+// All queries MUST include tenant_id to ensure multi-tenant isolation
+// Example: appRepository.find({ where: { tenant_id: currentTenantId } })
 ```
 
 #### App Execution Entity
@@ -702,6 +732,183 @@ admin-panel/src/
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Chatbox Backend API
+
+The chatbox communicates with the backend through a REST API that handles AI conversations and streaming responses.
+
+#### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/ai-apps/chat` | Send a message and get AI response (streaming) |
+| GET | `/api/v1/ai-apps/conversations` | List conversation history |
+| GET | `/api/v1/ai-apps/conversations/:id` | Get specific conversation |
+| DELETE | `/api/v1/ai-apps/conversations/:id` | Delete conversation |
+
+#### Chat Endpoint
+
+**Request:**
+
+```typescript
+POST /api/v1/ai-apps/chat
+Authorization: Bearer {admin_jwt_token}
+Content-Type: application/json
+
+{
+  "message": "Create an app that sends weekly engagement emails",
+  "conversation_id": "conv_abc123",  // Optional: continue existing conversation
+  "require_confirmation": true       // Optional: require user confirm before app creation
+}
+```
+
+**Response (Server-Sent Events for streaming):**
+
+```typescript
+// Stream response using SSE
+Content-Type: text/event-stream
+
+event: message_start
+data: {"conversation_id": "conv_abc123", "message_id": "msg_xyz789"}
+
+event: content_delta
+data: {"delta": "I'll create a **Weekly Engagement"}
+
+event: content_delta
+data: {"delta": " Digest** app for you."}
+
+event: tool_use
+data: {"tool": "create_app", "status": "pending", "app_preview": {...}}
+
+event: tool_result
+data: {"tool": "create_app", "status": "success", "app_id": 42}
+
+event: content_delta
+data: {"delta": "\n\n✓ App created successfully!"}
+
+event: message_complete
+data: {"message_id": "msg_xyz789", "usage": {"input_tokens": 150, "output_tokens": 320}}
+```
+
+#### Chat Controller Implementation
+
+```typescript
+@Controller('api/v1/ai-apps')
+@UseGuards(JwtAuthGuard, AdminGuard)
+export class AiAppsController {
+  @Post('chat')
+  @Sse()
+  async chat(
+    @Body() body: ChatRequestDto,
+    @Request() req: AuthenticatedRequest,
+  ): Promise<Observable<MessageEvent>> {
+    const { tenant_id, user_id } = req;
+
+    // Rate limit check
+    const rateCheck = await this.rateLimitService.checkLimit(tenant_id, 'chatbox');
+    if (!rateCheck.allowed) {
+      throw new TooManyRequestsException(
+        `Rate limit exceeded. Try again in ${rateCheck.reset_in_seconds}s`
+      );
+    }
+
+    // Create or get conversation
+    const conversation = body.conversation_id
+      ? await this.conversationService.get(body.conversation_id)
+      : await this.conversationService.create(tenant_id, user_id);
+
+    // Build Claude request with MCP tools
+    const claudeRequest = {
+      model: process.env.ANTHROPIC_MODEL,
+      max_tokens: 4096,
+      system: this.buildSystemPrompt(tenant_id),
+      messages: [
+        ...conversation.messages,
+        { role: 'user', content: body.message },
+      ],
+      tools: this.mcpToolService.getAvailableTools(tenant_id),
+      stream: true,
+    };
+
+    // Return streaming response
+    return this.claudeService.streamWithToolExecution(
+      claudeRequest,
+      {
+        tenant_id,
+        user_id,
+        conversation_id: conversation.id,
+        require_confirmation: body.require_confirmation,
+      }
+    );
+  }
+
+  private buildSystemPrompt(tenant_id: string): string {
+    return `You are an AI assistant that helps create micro-apps for the Decommerce platform.
+
+Tenant: ${tenant_id}
+Available tools: create_app, list_apps, update_app, delete_app, run_app, pause_app
+
+When creating apps:
+1. Ask clarifying questions if the request is ambiguous
+2. Generate a complete app configuration
+3. Explain what the app will do before creating it
+4. Use the create_app tool to save the app
+
+Always be helpful and explain your actions clearly.`;
+  }
+}
+```
+
+#### Tool Confirmation Flow
+
+When `require_confirmation: true`, the API pauses before executing destructive tools:
+
+```typescript
+event: tool_use
+data: {
+  "tool": "create_app",
+  "status": "awaiting_confirmation",
+  "app_preview": {
+    "name": "Weekly Engagement Digest",
+    "trigger": "scheduled",
+    "actions": ["fetch users", "generate email", "send email"]
+  },
+  "confirmation_id": "confirm_abc123"
+}
+
+// Frontend shows confirmation dialog
+// User clicks "Confirm"
+
+POST /api/v1/ai-apps/confirm
+{
+  "confirmation_id": "confirm_abc123",
+  "approved": true
+}
+
+// Stream continues with tool execution
+event: tool_result
+data: {"tool": "create_app", "status": "success", "app_id": 42}
+```
+
+#### Conversation Storage
+
+```typescript
+interface Conversation {
+  id: string;
+  tenant_id: string;
+  user_id: number;
+  messages: Message[];
+  created_at: Date;
+  updated_at: Date;
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
+  tool_calls?: ToolCall[];
+  timestamp: Date;
+}
+```
+
 ---
 
 ## Micro-App Catalog
@@ -866,6 +1073,36 @@ type ActionType =
   | 'for_each'
   | 'ai_analyze'
   | 'ai_generate';
+
+// Condition configuration for conditional actions
+interface ConditionConfig {
+  field: string;           // Field path (supports dot notation: "user.status")
+  operator: ConditionOperator;
+  value: any;              // Value to compare against
+  // Optional: combine multiple conditions
+  and?: ConditionConfig[];
+  or?: ConditionConfig[];
+}
+
+type ConditionOperator =
+  | 'equals'           // field === value
+  | 'not_equals'       // field !== value
+  | 'contains'         // field.includes(value) - for strings/arrays
+  | 'not_contains'     // !field.includes(value)
+  | 'starts_with'      // field.startsWith(value)
+  | 'ends_with'        // field.endsWith(value)
+  | 'greater_than'     // field > value
+  | 'greater_than_or_equals' // field >= value
+  | 'less_than'        // field < value
+  | 'less_than_or_equals'    // field <= value
+  | 'is_null'          // field === null || field === undefined
+  | 'is_not_null'      // field !== null && field !== undefined
+  | 'is_empty'         // field.length === 0 (for strings/arrays)
+  | 'is_not_empty'     // field.length > 0
+  | 'in'               // value.includes(field) - field is in array
+  | 'not_in'           // !value.includes(field)
+  | 'matches'          // RegExp(value).test(field)
+  | 'between';         // value[0] <= field <= value[1]
 ```
 
 ### Example: Low-Quality Post Detector
@@ -1013,6 +1250,321 @@ type ActionType =
 
 ---
 
+## Variable Interpolation
+
+Apps use **variable interpolation** to reference data from the data pipeline, trigger events, and action outputs. The syntax is `{{variable}}` using double curly braces.
+
+### Basic Syntax
+
+```
+{{variable_name}}           → Simple variable reference
+{{object.property}}         → Dot notation for nested access
+{{array[0]}}                → Array index access
+{{object.items[0].name}}    → Combined nested + array access
+```
+
+### Variable Sources
+
+| Source | Syntax | Example |
+|--------|--------|---------|
+| **Data pipeline step** | `{{step_id.field}}` | `{{active_users.email}}` |
+| **Trigger payload** | `{{trigger.field}}` | `{{trigger.post_id}}` |
+| **Loop variable** | `{{loop_var.field}}` | `{{user.first_name}}` (inside for_each) |
+| **Action output** | `{{output_var}}` | `{{email_body}}` (from ai_generate) |
+| **App metadata** | `{{app.field}}` | `{{app.name}}` |
+| **Current context** | `{{now}}`, `{{tenant_id}}` | Execution timestamp, current tenant |
+
+### Default Values
+
+Use the `|` pipe operator to provide fallback values:
+
+```
+{{user.nickname | user.first_name}}      → Use nickname, fallback to first_name
+{{user.avatar | "default.png"}}          → Use avatar, fallback to literal string
+{{stats.posts_count | 0}}                → Use posts_count, fallback to 0
+```
+
+### Filters & Transformations
+
+Apply transformations using the `:` colon operator:
+
+```
+{{user.first_name:uppercase}}            → JOHN
+{{user.email:lowercase}}                 → john@example.com
+{{created_at:date("YYYY-MM-DD")}}        → 2025-01-29
+{{amount:number("0.00")}}                → 1234.56
+{{items:count}}                          → 5 (array length)
+{{content:truncate(100)}}                → First 100 chars...
+{{list:join(", ")}}                      → item1, item2, item3
+{{value:json}}                           → JSON stringify
+```
+
+### Available Filters
+
+| Filter | Description | Example |
+|--------|-------------|---------|
+| `uppercase` | Convert to uppercase | `{{name:uppercase}}` → "JOHN" |
+| `lowercase` | Convert to lowercase | `{{email:lowercase}}` → "john@example.com" |
+| `capitalize` | Capitalize first letter | `{{name:capitalize}}` → "John" |
+| `trim` | Remove whitespace | `{{input:trim}}` |
+| `date(format)` | Format date | `{{created_at:date("MMM D, YYYY")}}` → "Jan 29, 2025" |
+| `number(format)` | Format number | `{{price:number("0,0.00")}}` → "1,234.56" |
+| `count` | Array length | `{{users:count}}` → 42 |
+| `first` | First array element | `{{items:first}}` |
+| `last` | Last array element | `{{items:last}}` |
+| `join(sep)` | Join array | `{{tags:join(", ")}}` → "a, b, c" |
+| `truncate(n)` | Truncate string | `{{content:truncate(50)}}` → "First 50 chars..." |
+| `json` | JSON stringify | `{{object:json}}` |
+| `default(val)` | Default if null | `{{name:default("Anonymous")}}` |
+
+### Escaping
+
+To output literal `{{` without interpolation, use double brackets:
+
+```
+{{{{variable}}}}  → Outputs: {{variable}}
+```
+
+### Interpolation in Different Contexts
+
+**In filter values:**
+```json
+{
+  "filter": { "user_id": "{{trigger.user_id}}" }
+}
+```
+
+**In action params:**
+```json
+{
+  "type": "send_email",
+  "params": {
+    "to": "{{user.email}}",
+    "subject": "Hello {{user.first_name}}!"
+  }
+}
+```
+
+**In AI prompts:**
+```json
+{
+  "type": "ai_generate",
+  "params": {
+    "prompt": "Write a welcome message for {{user.first_name}} who joined {{user.created_at:date('MMMM YYYY')}}."
+  }
+}
+```
+
+### Variable Scope
+
+Variables are scoped hierarchically:
+
+1. **Global scope**: `trigger.*`, `app.*`, `now`, `tenant_id`
+2. **Pipeline scope**: Each data step adds its `step_id` to scope
+3. **Loop scope**: `for_each` adds its `as` variable (shadows outer variables)
+4. **Action scope**: `output_var` from previous actions
+
+```json
+{
+  "data_pipeline": [
+    { "id": "users", "connector": "users" }
+  ],
+  "actions": [
+    {
+      "type": "for_each",
+      "params": {
+        "items": "users",
+        "as": "user",
+        "do": [
+          {
+            "type": "ai_generate",
+            "params": {
+              "prompt": "Welcome {{user.first_name}}",
+              "output_var": "welcome_msg"
+            }
+          },
+          {
+            "type": "send_email",
+            "params": {
+              "to": "{{user.email}}",
+              "body": "{{welcome_msg}}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+---
+
+## App Configuration Validation
+
+Before an AI-generated app configuration is saved, it must pass validation. This ensures apps are safe, well-formed, and within limits.
+
+### Validation Pipeline
+
+```
+AI generates config → Schema Validation → Semantic Validation → Limit Checks → Save
+```
+
+### Schema Validation
+
+Validates that the configuration matches the expected TypeScript interface:
+
+```typescript
+class AppConfigValidator {
+  validateSchema(config: unknown): ValidationResult {
+    // 1. Required fields
+    if (!config.trigger) return { valid: false, errors: ['Missing trigger'] };
+    if (!config.actions || config.actions.length === 0) {
+      return { valid: false, errors: ['At least one action required'] };
+    }
+
+    // 2. Trigger type validation
+    const validTriggers = ['scheduled', 'event', 'delayed', 'manual'];
+    if (!validTriggers.includes(config.trigger.type)) {
+      return { valid: false, errors: [`Invalid trigger type: ${config.trigger.type}`] };
+    }
+
+    // 3. Action type validation
+    for (const action of config.actions) {
+      if (!VALID_ACTION_TYPES.includes(action.type)) {
+        return { valid: false, errors: [`Invalid action type: ${action.type}`] };
+      }
+    }
+
+    // 4. Connector type validation
+    for (const step of config.data_pipeline || []) {
+      if (!VALID_CONNECTOR_TYPES.includes(step.connector)) {
+        return { valid: false, errors: [`Invalid connector: ${step.connector}`] };
+      }
+    }
+
+    return { valid: true, errors: [] };
+  }
+}
+```
+
+### Semantic Validation
+
+Validates that the configuration makes logical sense:
+
+```typescript
+class SemanticValidator {
+  validate(config: AppConfig): ValidationResult {
+    const errors: string[] = [];
+
+    // 1. Variable references exist
+    const definedVariables = this.collectDefinedVariables(config);
+    const usedVariables = this.extractUsedVariables(config);
+
+    for (const variable of usedVariables) {
+      if (!definedVariables.includes(variable) && !this.isBuiltIn(variable)) {
+        errors.push(`Undefined variable: {{${variable}}}`);
+      }
+    }
+
+    // 2. Cron expression is valid (for scheduled triggers)
+    if (config.trigger.type === 'scheduled') {
+      if (!this.isValidCron(config.trigger.cron)) {
+        errors.push(`Invalid cron expression: ${config.trigger.cron}`);
+      }
+    }
+
+    // 3. Event exists (for event triggers)
+    if (config.trigger.type === 'event') {
+      if (!VALID_EVENTS.includes(config.trigger.event)) {
+        errors.push(`Unknown event: ${config.trigger.event}`);
+      }
+    }
+
+    // 4. Email has required fields
+    for (const action of this.findActions(config, 'send_email')) {
+      if (!action.params.to) errors.push('send_email missing "to" parameter');
+      if (!action.params.subject) errors.push('send_email missing "subject" parameter');
+      if (!action.params.body) errors.push('send_email missing "body" parameter');
+    }
+
+    // 5. for_each has items and nested actions
+    for (const action of this.findActions(config, 'for_each')) {
+      if (!action.params.items) errors.push('for_each missing "items" parameter');
+      if (!action.params.as) errors.push('for_each missing "as" parameter');
+      if (!action.params.do || action.params.do.length === 0) {
+        errors.push('for_each missing nested actions in "do"');
+      }
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+}
+```
+
+### Limit Validation
+
+Ensures the app is within resource limits:
+
+```typescript
+class LimitValidator {
+  async validate(config: AppConfig, tenant_id: string): Promise<ValidationResult> {
+    const errors: string[] = [];
+
+    // 1. Pipeline steps limit
+    if ((config.data_pipeline?.length || 0) > MAX_PIPELINE_STEPS) {
+      errors.push(`Too many data pipeline steps (max: ${MAX_PIPELINE_STEPS})`);
+    }
+
+    // 2. Actions limit
+    const actionCount = this.countActions(config.actions);
+    if (actionCount > MAX_ACTIONS_PER_APP) {
+      errors.push(`Too many actions (max: ${MAX_ACTIONS_PER_APP})`);
+    }
+
+    // 3. Nesting depth limit
+    const depth = this.maxNestingDepth(config.actions);
+    if (depth > MAX_NESTED_LOOPS) {
+      errors.push(`Nesting too deep (max: ${MAX_NESTED_LOOPS} levels)`);
+    }
+
+    // 4. Apps per tenant limit
+    const existingCount = await this.appService.count({ where: { tenant_id } });
+    if (existingCount >= MAX_APPS_PER_TENANT) {
+      errors.push(`App limit reached (max: ${MAX_APPS_PER_TENANT} per tenant)`);
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+}
+```
+
+### Validation Response
+
+When validation fails, AI receives detailed error messages:
+
+```typescript
+interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings?: string[];  // Non-fatal issues
+  suggestions?: string[]; // Improvement suggestions
+}
+
+// Example failure response to AI:
+{
+  "valid": false,
+  "errors": [
+    "Undefined variable: {{user.nickname}} - did you mean {{user.first_name}}?",
+    "send_email missing 'subject' parameter"
+  ],
+  "warnings": [
+    "for_each loop may process many items - consider adding a limit filter"
+  ]
+}
+```
+
+---
+
 ## Data Connectors
 
 ### Available Connectors
@@ -1051,6 +1603,221 @@ interface DataConnector {
 
   // Validate filter
   validateFilter(filter: Record<string, any>): ValidationResult;
+}
+```
+
+---
+
+## Logic Transformations
+
+The data pipeline supports transformations to filter, sort, group, and aggregate data between connector fetches and action execution.
+
+### Available Logic Operations
+
+| Operation | Description | Example |
+|-----------|-------------|---------|
+| `filter` | Keep items matching criteria | Keep users with XP > 100 |
+| `sort` | Order items by field | Sort by created_at descending |
+| `group` | Group items by field | Group posts by room_id |
+| `aggregate` | Calculate stats | Count, sum, average, min, max |
+| `merge` | Combine data sources | Join users with their stats |
+| `limit` | Take first N items | First 100 users |
+| `map` | Transform each item | Extract specific fields |
+
+### Pipeline Step Configuration
+
+```typescript
+interface DataStepConfig {
+  id: string;
+  connector: ConnectorType;
+  filter?: FilterConfig;       // Filter at connector level
+  fields?: string[];           // Select specific fields
+  limit?: number;
+
+  // Post-fetch transformations
+  transform?: TransformConfig[];
+}
+
+interface TransformConfig {
+  operation: 'filter' | 'sort' | 'group' | 'aggregate' | 'merge' | 'limit' | 'map';
+  params: Record<string, any>;
+}
+```
+
+### Filter Syntax
+
+Filters support comparison operators and logical combinations:
+
+```typescript
+interface FilterConfig {
+  // Simple equality
+  field?: any;
+  // { "status": "Active" } → WHERE status = 'Active'
+
+  // Comparison operators
+  $gt?: any;   // Greater than
+  $gte?: any;  // Greater than or equal
+  $lt?: any;   // Less than
+  $lte?: any;  // Less than or equal
+  $ne?: any;   // Not equal
+  $in?: any[]; // In array
+  $nin?: any[]; // Not in array
+  $like?: string; // LIKE pattern
+  $ilike?: string; // Case-insensitive LIKE
+
+  // Logical operators
+  $and?: FilterConfig[];
+  $or?: FilterConfig[];
+  $not?: FilterConfig;
+}
+
+// Examples:
+{
+  "filter": {
+    "status": "Active",
+    "xp": { "$gte": 100 },
+    "created_at": { "$gte": "-30d" }  // Relative date
+  }
+}
+
+{
+  "filter": {
+    "$or": [
+      { "role": "admin" },
+      { "xp": { "$gte": 1000 } }
+    ]
+  }
+}
+```
+
+### Sort Syntax
+
+```typescript
+interface SortConfig {
+  field: string;
+  order: 'asc' | 'desc';
+}
+
+// In transform:
+{
+  "operation": "sort",
+  "params": {
+    "by": [
+      { "field": "xp", "order": "desc" },
+      { "field": "created_at", "order": "asc" }
+    ]
+  }
+}
+```
+
+### Group & Aggregate
+
+```typescript
+// Group users by room and count
+{
+  "operation": "group",
+  "params": {
+    "by": "room_id",
+    "aggregations": [
+      { "field": "id", "function": "count", "as": "user_count" },
+      { "field": "xp", "function": "sum", "as": "total_xp" },
+      { "field": "xp", "function": "avg", "as": "avg_xp" }
+    ]
+  }
+}
+
+// Available aggregation functions:
+// count, sum, avg, min, max, first, last
+```
+
+### Merge (Join) Data Sources
+
+```typescript
+// Join user stats with users
+{
+  "data_pipeline": [
+    {
+      "id": "users",
+      "connector": "users",
+      "filter": { "status": "Active" }
+    },
+    {
+      "id": "stats",
+      "connector": "user_engagement",
+      "transform": [
+        {
+          "operation": "merge",
+          "params": {
+            "with": "users",
+            "on": { "left": "user_id", "right": "id" },
+            "type": "left"  // left, inner, outer
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Map (Transform)
+
+```typescript
+// Extract and rename fields
+{
+  "operation": "map",
+  "params": {
+    "fields": {
+      "name": "{{first_name}} {{last_name}}",
+      "email": "email",
+      "engagement_score": "{{xp * 0.1 + posts_count * 5}}"
+    }
+  }
+}
+```
+
+### Example: Complex Data Pipeline
+
+```json
+{
+  "data_pipeline": [
+    {
+      "id": "active_users",
+      "connector": "users",
+      "filter": {
+        "status": "Active",
+        "created_at": { "$gte": "-30d" }
+      },
+      "transform": [
+        {
+          "operation": "sort",
+          "params": { "by": [{ "field": "xp", "order": "desc" }] }
+        },
+        {
+          "operation": "limit",
+          "params": { "count": 100 }
+        }
+      ]
+    },
+    {
+      "id": "user_stats",
+      "connector": "user_engagement",
+      "transform": [
+        {
+          "operation": "merge",
+          "params": {
+            "with": "active_users",
+            "on": { "left": "user_id", "right": "id" }
+          }
+        },
+        {
+          "operation": "filter",
+          "params": {
+            "posts_this_week": { "$gte": 1 }
+          }
+        }
+      ]
+    }
+  ]
 }
 ```
 
@@ -1098,6 +1865,106 @@ interface ExecutionContext {
 }
 ```
 
+### Webhook Security
+
+The `webhook` action calls external URLs, which requires strict security controls to prevent SSRF (Server-Side Request Forgery) and other attacks.
+
+#### URL Allowlist
+
+Webhooks can only call pre-approved domains:
+
+```typescript
+interface WebhookConfig {
+  // Tenant-level allowlist (set by admin)
+  allowed_domains: string[];  // e.g., ["api.slack.com", "hooks.zapier.com"]
+
+  // Global blocklist (always enforced)
+  blocked_patterns: string[]; // Internal IPs, localhost, cloud metadata
+}
+
+// Default blocked patterns (cannot be overridden):
+const BLOCKED_PATTERNS = [
+  '127.0.0.1', 'localhost', '0.0.0.0',
+  '10.*', '172.16.*', '172.17.*', '172.18.*', '172.19.*',
+  '172.20.*', '172.21.*', '172.22.*', '172.23.*', '172.24.*',
+  '172.25.*', '172.26.*', '172.27.*', '172.28.*', '172.29.*',
+  '172.30.*', '172.31.*', '192.168.*',
+  '169.254.169.254',  // AWS metadata
+  'metadata.google.internal',  // GCP metadata
+];
+```
+
+#### Webhook Action Security
+
+```typescript
+class WebhookAction implements ActionExecutor {
+  async execute(params: WebhookParams, context: ExecutionContext) {
+    const { url, method, body, headers } = params;
+
+    // 1. Validate URL against allowlist
+    const domain = new URL(url).hostname;
+    if (!this.isAllowed(domain, context.tenant_id)) {
+      throw new AppExecutionError(
+        `Domain "${domain}" not in webhook allowlist. ` +
+        `Add it in Settings > Webhook Domains.`
+      );
+    }
+
+    // 2. Block internal/private IPs
+    if (this.isBlocked(url)) {
+      throw new AppExecutionError('URL blocked for security reasons');
+    }
+
+    // 3. Enforce timeout
+    const response = await this.httpClient.request({
+      url,
+      method: method || 'POST',
+      data: body,
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Decommerce-App-Framework/1.0',
+        ...headers,
+      },
+      timeout: WEBHOOK_TIMEOUT_MS,  // 30 seconds max
+    });
+
+    // 4. Don't follow redirects to blocked URLs
+    if (response.redirected && this.isBlocked(response.url)) {
+      throw new AppExecutionError('Redirect to blocked URL');
+    }
+
+    return { status: response.status, body: response.data };
+  }
+}
+```
+
+#### Webhook Limits
+
+| Limit | Value | Description |
+|-------|-------|-------------|
+| `WEBHOOK_TIMEOUT_MS` | 30,000 | Max time to wait for response |
+| `WEBHOOK_MAX_RETRIES` | 2 | Retry attempts on failure |
+| `WEBHOOK_MAX_BODY_SIZE` | 1 MB | Maximum request body size |
+| `WEBHOOK_RATE_LIMIT` | 100/hour | Max webhook calls per tenant per hour |
+
+#### Webhook Logging
+
+All webhook calls are logged for audit:
+
+```typescript
+interface WebhookLog {
+  app_id: number;
+  execution_id: number;
+  url: string;
+  method: string;
+  status_code: number;
+  response_time_ms: number;
+  success: boolean;
+  error?: string;
+  timestamp: Date;
+}
+```
+
 ---
 
 ## Triggers System
@@ -1108,7 +1975,168 @@ interface ExecutionContext {
 |------|-------------|---------------|
 | `scheduled` | Cron-based | `{ cron: "0 9 * * MON", timezone: "UTC" }` |
 | `event` | On platform event | `{ event: "user.created", filter?: {...} }` |
+| `delayed` | Event + delay | `{ event: "user.created", delays: ["1d", "3d", "7d"] }` |
 | `manual` | Admin clicks "Run" | `{}` |
+
+### Delayed Trigger (for Welcome Series)
+
+The `delayed` trigger is specifically designed for multi-step sequences like welcome email series. It fires at specified intervals after an event occurs.
+
+**Use case:** Send welcome emails on Day 1, Day 3, and Day 7 after signup.
+
+```typescript
+interface DelayedTriggerConfig {
+  type: 'delayed';
+  event: EventType;           // Base event to trigger the sequence
+  delays: DelaySpec[];        // When to execute after the event
+  filter?: Record<string, any>; // Optional filter on the event
+}
+
+type DelaySpec = string | {
+  delay: string;              // e.g., "1d", "3d", "7d", "24h", "30m"
+  condition?: ConditionConfig; // Optional: only run if condition met
+};
+
+// Examples:
+// "1d" = 1 day after event
+// "3d" = 3 days after event
+// "7d" = 7 days after event
+// "24h" = 24 hours after event
+// "30m" = 30 minutes after event
+```
+
+**Example: Welcome Email Series**
+
+```json
+{
+  "app": {
+    "name": "New User Welcome Series",
+    "description": "3-email series for new users"
+  },
+  "trigger": {
+    "type": "delayed",
+    "event": "user.created",
+    "delays": [
+      { "delay": "1d", "condition": null },
+      { "delay": "3d", "condition": { "field": "user.is_active", "operator": "equals", "value": true } },
+      { "delay": "7d", "condition": { "field": "user.missions_completed", "operator": "less_than", "value": 3 } }
+    ]
+  },
+  "data_pipeline": [
+    {
+      "id": "user",
+      "connector": "users",
+      "filter": { "id": "{{trigger.user_id}}" }
+    }
+  ],
+  "actions": [
+    {
+      "type": "ai_generate",
+      "params": {
+        "prompt": "Write welcome email #{{trigger.delay_index}} for {{user.first_name}}",
+        "output_var": "email_body"
+      }
+    },
+    {
+      "type": "send_email",
+      "params": {
+        "to": "{{user.email}}",
+        "subject": "{{trigger.delay_index == 0 ? 'Welcome!' : trigger.delay_index == 1 ? 'How are you doing?' : 'We miss you!'}}",
+        "body": "{{email_body}}"
+      }
+    }
+  ]
+}
+```
+
+**How Delayed Triggers Work:**
+
+```typescript
+@Entity('delayed_executions')
+export class DelayedExecution {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @ManyToOne(() => App)
+  app: App;
+
+  @Column({ type: 'jsonb' })
+  trigger_data: any;  // Original event data
+
+  @Column({ type: 'int' })
+  delay_index: number;  // Which delay in the sequence (0, 1, 2...)
+
+  @Column({ type: 'timestamp' })
+  scheduled_for: Date;  // When to execute
+
+  @Column({ type: 'enum', enum: DelayedStatus })
+  status: DelayedStatus;  // PENDING, EXECUTED, CANCELLED, SKIPPED
+}
+
+@Injectable()
+export class DelayedTriggerService {
+  // Called when base event fires
+  async scheduleDelayedExecutions(app: App, eventPayload: any) {
+    const { delays } = app.config.trigger;
+    const baseTime = new Date();
+
+    for (let i = 0; i < delays.length; i++) {
+      const delay = delays[i];
+      const scheduledFor = this.addDelay(baseTime, delay.delay || delay);
+
+      await this.delayedExecutionRepo.save({
+        app,
+        trigger_data: { ...eventPayload, delay_index: i },
+        delay_index: i,
+        scheduled_for: scheduledFor,
+        status: DelayedStatus.PENDING,
+      });
+    }
+  }
+
+  // Cron job runs every minute to check for due executions
+  @Cron('* * * * *')
+  async processDelayedExecutions() {
+    const dueExecutions = await this.delayedExecutionRepo.find({
+      where: {
+        scheduled_for: LessThanOrEqual(new Date()),
+        status: DelayedStatus.PENDING,
+      },
+    });
+
+    for (const execution of dueExecutions) {
+      // Check condition if specified
+      const delay = execution.app.config.trigger.delays[execution.delay_index];
+      if (delay.condition) {
+        const conditionMet = await this.evaluateCondition(
+          delay.condition,
+          execution.trigger_data
+        );
+        if (!conditionMet) {
+          execution.status = DelayedStatus.SKIPPED;
+          await this.delayedExecutionRepo.save(execution);
+          continue;
+        }
+      }
+
+      // Execute the app
+      await this.appExecutorService.execute(execution.app, {
+        trigger_data: execution.trigger_data,
+      });
+
+      execution.status = DelayedStatus.EXECUTED;
+      await this.delayedExecutionRepo.save(execution);
+    }
+  }
+}
+```
+
+**Cancellation:** If the user completes a specific action (like making a purchase), you can cancel remaining delayed executions:
+
+```typescript
+// Cancel remaining welcome emails if user becomes highly engaged
+await delayedTriggerService.cancelPendingExecutions(app.id, user_id);
+```
 
 ### Available Events
 
@@ -1123,6 +2151,269 @@ interface ExecutionContext {
 | `room.joined` | User joins room | `{ user_id, room_id }` |
 | `shopify.order.created` | New Shopify order | `{ order_id, customer_email, total }` |
 | `shopify.order.fulfilled` | Order fulfilled | `{ order_id, customer_email }` |
+
+### Trigger Filter Syntax
+
+Event triggers can include filters to only fire for specific events. This prevents apps from running on every event.
+
+#### Basic Filter Syntax
+
+```typescript
+interface EventTriggerConfig {
+  type: 'event';
+  event: EventType;
+  filter?: TriggerFilterConfig;
+}
+
+interface TriggerFilterConfig {
+  // Match payload fields
+  [field: string]: any | FilterOperator;
+}
+```
+
+#### Examples
+
+**1. Only trigger for posts in a specific room:**
+
+```json
+{
+  "trigger": {
+    "type": "event",
+    "event": "post.created",
+    "filter": {
+      "room_id": 42
+    }
+  }
+}
+```
+
+**2. Only trigger for high-value Shopify orders:**
+
+```json
+{
+  "trigger": {
+    "type": "event",
+    "event": "shopify.order.created",
+    "filter": {
+      "total": { "$gte": 100 }
+    }
+  }
+}
+```
+
+**3. Only trigger for users with verified email domain:**
+
+```json
+{
+  "trigger": {
+    "type": "event",
+    "event": "user.created",
+    "filter": {
+      "email": { "$like": "%@company.com" }
+    }
+  }
+}
+```
+
+**4. Complex filter with OR condition:**
+
+```json
+{
+  "trigger": {
+    "type": "event",
+    "event": "mission.completed",
+    "filter": {
+      "$or": [
+        { "xp_earned": { "$gte": 100 } },
+        { "mission_id": { "$in": [1, 2, 3] } }
+      ]
+    }
+  }
+}
+```
+
+#### Available Filter Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `$eq` | Equals (default) | `{ "status": "Active" }` |
+| `$ne` | Not equals | `{ "status": { "$ne": "Deleted" } }` |
+| `$gt` | Greater than | `{ "total": { "$gt": 50 } }` |
+| `$gte` | Greater than or equal | `{ "xp": { "$gte": 100 } }` |
+| `$lt` | Less than | `{ "age": { "$lt": 18 } }` |
+| `$lte` | Less than or equal | `{ "items": { "$lte": 5 } }` |
+| `$in` | In array | `{ "room_id": { "$in": [1, 2, 3] } }` |
+| `$nin` | Not in array | `{ "status": { "$nin": ["Banned", "Deleted"] } }` |
+| `$like` | SQL LIKE | `{ "email": { "$like": "%@gmail.com" } }` |
+| `$exists` | Field exists | `{ "shopify_id": { "$exists": true } }` |
+| `$and` | All conditions match | `{ "$and": [{...}, {...}] }` |
+| `$or` | Any condition matches | `{ "$or": [{...}, {...}] }` |
+
+#### Filter Evaluation
+
+```typescript
+class TriggerFilterEvaluator {
+  matches(filter: TriggerFilterConfig, payload: any): boolean {
+    for (const [field, condition] of Object.entries(filter)) {
+      // Handle logical operators
+      if (field === '$and') {
+        return condition.every(c => this.matches(c, payload));
+      }
+      if (field === '$or') {
+        return condition.some(c => this.matches(c, payload));
+      }
+
+      // Get payload value
+      const value = this.getNestedValue(payload, field);
+
+      // Simple equality
+      if (typeof condition !== 'object' || condition === null) {
+        if (value !== condition) return false;
+        continue;
+      }
+
+      // Operator-based comparison
+      if (!this.evaluateOperator(value, condition)) return false;
+    }
+    return true;
+  }
+
+  private evaluateOperator(value: any, operators: Record<string, any>): boolean {
+    for (const [op, expected] of Object.entries(operators)) {
+      switch (op) {
+        case '$eq': if (value !== expected) return false; break;
+        case '$ne': if (value === expected) return false; break;
+        case '$gt': if (value <= expected) return false; break;
+        case '$gte': if (value < expected) return false; break;
+        case '$lt': if (value >= expected) return false; break;
+        case '$lte': if (value > expected) return false; break;
+        case '$in': if (!expected.includes(value)) return false; break;
+        case '$nin': if (expected.includes(value)) return false; break;
+        case '$like': if (!this.matchLike(value, expected)) return false; break;
+        case '$exists': if ((value !== undefined) !== expected) return false; break;
+      }
+    }
+    return true;
+  }
+}
+```
+
+### Shopify Webhook Integration
+
+Shopify events reach the App Framework through the existing Shopify webhook integration. Here's how it works:
+
+```
+Shopify Store → Webhook → Decommerce Backend → App Framework → Micro-App
+```
+
+#### Shopify Webhook Registration
+
+When a tenant connects their Shopify store, Decommerce automatically registers webhooks:
+
+```typescript
+// Registered Shopify webhooks:
+const SHOPIFY_WEBHOOKS = [
+  'orders/create',       // → shopify.order.created
+  'orders/fulfilled',    // → shopify.order.fulfilled
+  'orders/cancelled',    // → shopify.order.cancelled
+  'products/create',     // → shopify.product.created
+  'products/update',     // → shopify.product.updated
+  'customers/create',    // → shopify.customer.created
+  'carts/create',        // → shopify.cart.created (for abandoned cart)
+  'carts/update',        // → shopify.cart.updated
+];
+```
+
+#### Webhook Handler
+
+The existing Shopify controller receives webhooks and translates them to platform events:
+
+```typescript
+@Controller('webhooks/shopify')
+export class ShopifyWebhookController {
+  @Post(':tenant_id')
+  @ShopifyHmacVerified()  // Verify Shopify signature
+  async handleWebhook(
+    @Param('tenant_id') tenant_id: string,
+    @Headers('X-Shopify-Topic') topic: string,
+    @Body() payload: any,
+  ) {
+    // Map Shopify topic to platform event
+    const eventMap = {
+      'orders/create': 'shopify.order.created',
+      'orders/fulfilled': 'shopify.order.fulfilled',
+      // ...
+    };
+
+    const eventType = eventMap[topic];
+    if (!eventType) return;
+
+    // Transform payload to normalized format
+    const eventPayload = this.transformPayload(topic, payload, tenant_id);
+
+    // Emit platform event (picked up by App Framework)
+    this.eventEmitter.emit(eventType, eventPayload);
+  }
+
+  private transformPayload(topic: string, shopifyPayload: any, tenant_id: string) {
+    // Normalize Shopify data to platform format
+    if (topic === 'orders/create') {
+      return {
+        tenant_id,
+        order_id: shopifyPayload.id,
+        customer_email: shopifyPayload.customer?.email,
+        customer_name: shopifyPayload.customer?.first_name,
+        total: parseFloat(shopifyPayload.total_price),
+        currency: shopifyPayload.currency,
+        items: shopifyPayload.line_items.map(item => ({
+          product_id: item.product_id,
+          title: item.title,
+          quantity: item.quantity,
+          price: parseFloat(item.price),
+        })),
+        created_at: new Date(shopifyPayload.created_at),
+      };
+    }
+    // ... other transformations
+  }
+}
+```
+
+#### Matching Shopify Customers to Platform Users
+
+To link Shopify orders to platform users:
+
+```typescript
+class ShopifyConnector {
+  async matchUserByEmail(email: string, tenant_id: string): Promise<User | null> {
+    // Find user by Shopify email
+    return this.userRepository.findOne({
+      where: { email, tenant_id },
+    });
+  }
+}
+
+// In app execution context, the matched user is available:
+{
+  "trigger_data": {
+    "order_id": 12345,
+    "customer_email": "john@example.com",
+    "matched_user": {
+      "id": 789,
+      "first_name": "John",
+      "email": "john@example.com"
+    }
+  }
+}
+```
+
+#### Shopify-Specific Connectors
+
+| Connector | Description | Filters |
+|-----------|-------------|---------|
+| `shopify_orders` | Fetch order history | customer_email, created_after, total_gte |
+| `shopify_products` | Fetch products | product_id, title, collection_id |
+| `shopify_customers` | Fetch Shopify customers | email, created_after |
 
 ### Scheduler Implementation
 
@@ -1189,6 +2480,231 @@ export class AppEventListenerService {
   }
 
   // ... handlers for other events
+}
+```
+
+---
+
+## Execution Safeguards
+
+This section defines safeguards to prevent runaway apps, resource exhaustion, and concurrent execution issues.
+
+### Concurrent Execution Prevention
+
+An app should not run multiple times simultaneously. This prevents data corruption and resource contention.
+
+**Implementation: Execution Lock**
+
+```typescript
+interface ExecutionLock {
+  app_id: number;
+  tenant_id: string;
+  locked_at: Date;
+  expires_at: Date;  // Auto-expire after max execution time
+  execution_id: number;
+}
+
+class AppExecutorService {
+  async execute(app: App, context?: ExecutionContext): Promise<void> {
+    // 1. Try to acquire lock
+    const lock = await this.acquireLock(app.id, app.tenant_id);
+    if (!lock) {
+      console.log(`App ${app.id} is already running, skipping execution`);
+      return;
+    }
+
+    try {
+      // 2. Run the app
+      await this.runAppPipeline(app, context);
+    } finally {
+      // 3. Always release lock
+      await this.releaseLock(app.id, app.tenant_id);
+    }
+  }
+
+  private async acquireLock(appId: number, tenantId: string): Promise<boolean> {
+    // Use database advisory lock or Redis SETNX
+    // Returns false if app is already locked and lock hasn't expired
+  }
+}
+```
+
+**Lock Configuration:**
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Lock timeout | 5 minutes | Max time before lock auto-expires |
+| Stale lock recovery | On startup | Clean up any orphaned locks |
+
+### Maximum Limits
+
+These limits prevent resource exhaustion:
+
+| Limit | Value | Description |
+|-------|-------|-------------|
+| `MAX_APPS_PER_TENANT` | 50 | Maximum apps a tenant can create |
+| `MAX_PIPELINE_STEPS` | 10 | Maximum data connector steps per app |
+| `MAX_ACTIONS_PER_APP` | 20 | Maximum actions per app |
+| `MAX_FOR_EACH_ITEMS` | 1000 | Maximum items in a for_each loop |
+| `MAX_NESTED_LOOPS` | 2 | Maximum nesting depth for for_each |
+| `MAX_EXECUTION_TIME` | 5 minutes | Maximum time for single execution |
+| `MAX_AI_CALLS_PER_EXECUTION` | 100 | Maximum AI API calls per execution |
+| `MAX_EMAILS_PER_EXECUTION` | 500 | Maximum emails per single execution |
+| `MAX_CONSECUTIVE_ERRORS` | 5 | Auto-pause app after consecutive failures |
+
+### Enforcement
+
+```typescript
+class AppValidator {
+  validate(config: AppConfig): ValidationResult {
+    const errors: string[] = [];
+
+    // Check pipeline steps
+    if (config.data_pipeline.length > MAX_PIPELINE_STEPS) {
+      errors.push(`Too many data pipeline steps (max: ${MAX_PIPELINE_STEPS})`);
+    }
+
+    // Check actions count
+    const actionCount = this.countActions(config.actions);
+    if (actionCount > MAX_ACTIONS_PER_APP) {
+      errors.push(`Too many actions (max: ${MAX_ACTIONS_PER_APP})`);
+    }
+
+    // Check for_each nesting depth
+    const nestingDepth = this.checkNestingDepth(config.actions);
+    if (nestingDepth > MAX_NESTED_LOOPS) {
+      errors.push(`for_each nesting too deep (max: ${MAX_NESTED_LOOPS})`);
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+}
+```
+
+### Runtime Safeguards
+
+**For-each loop protection:**
+```typescript
+class ForEachAction {
+  async execute(params: ForEachParams, context: ExecutionContext) {
+    const items = this.resolveItems(params.items, context);
+
+    // Enforce limit
+    if (items.length > MAX_FOR_EACH_ITEMS) {
+      throw new AppExecutionError(
+        `for_each items exceed limit (${items.length} > ${MAX_FOR_EACH_ITEMS})`
+      );
+    }
+
+    // Process with progress tracking
+    for (let i = 0; i < items.length; i++) {
+      // Check execution timeout
+      if (context.hasTimedOut()) {
+        throw new AppExecutionError('Execution timeout reached');
+      }
+
+      await this.executeNestedActions(params.do, {
+        ...context,
+        [params.as]: items[i],
+        loopIndex: i,
+      });
+    }
+  }
+}
+```
+
+**Auto-pause on repeated failures:**
+```typescript
+class AppExecutorService {
+  async handleExecutionResult(app: App, success: boolean) {
+    if (success) {
+      // Reset consecutive error count
+      await this.appService.update(app.id, { consecutive_errors: 0 });
+    } else {
+      // Increment consecutive error count
+      const newCount = app.consecutive_errors + 1;
+
+      if (newCount >= MAX_CONSECUTIVE_ERRORS) {
+        // Auto-pause the app
+        await this.appService.update(app.id, {
+          status: AppStatus.ERROR,
+          consecutive_errors: newCount,
+        });
+
+        // Notify admins
+        await this.notifyAdmins(app.tenant_id, {
+          title: 'App auto-paused',
+          message: `App "${app.name}" paused after ${newCount} consecutive failures`,
+        });
+      } else {
+        await this.appService.update(app.id, { consecutive_errors: newCount });
+      }
+    }
+  }
+}
+```
+
+---
+
+## Error Recovery & Retry
+
+### Retry Strategy
+
+Failed executions can be automatically retried with exponential backoff:
+
+```typescript
+interface RetryConfig {
+  enabled: boolean;
+  max_retries: number;       // Default: 3
+  initial_delay_ms: number;  // Default: 1000 (1 second)
+  max_delay_ms: number;      // Default: 60000 (1 minute)
+  backoff_multiplier: number; // Default: 2
+}
+
+// Delay calculation: min(initial_delay * (multiplier ^ attempt), max_delay)
+// Attempt 1: 1s, Attempt 2: 2s, Attempt 3: 4s, ...
+```
+
+### Partial Execution Handling
+
+When an execution fails mid-way through a for_each loop:
+
+```typescript
+interface ExecutionCheckpoint {
+  execution_id: number;
+  last_completed_action: string;
+  last_processed_index: number;
+  partial_results: any;
+  can_resume: boolean;
+}
+```
+
+**Resume behavior:**
+- If `can_resume: true`, retry continues from `last_processed_index + 1`
+- If `can_resume: false`, entire execution restarts (actions are not idempotent)
+
+### Idempotency Markers
+
+For actions that should not be repeated (like sending emails):
+
+```typescript
+interface IdempotencyKey {
+  execution_id: number;
+  action_index: number;
+  item_id: string;  // e.g., user_id for emails
+}
+
+class SendEmailAction {
+  async execute(params: SendEmailParams, context: ExecutionContext) {
+    const idempotencyKey = this.generateKey(context, params.to);
+
+    // Check if already sent in this execution
+    if (await this.wasSent(idempotencyKey)) {
+      return { skipped: true, reason: 'Already sent in this execution' };
+    }
+
+    await this.sendEmail(params);
+    await this.markSent(idempotencyKey);
+  }
 }
 ```
 
@@ -1328,13 +2844,15 @@ export class AppEventListenerService {
 
 ---
 
-## Environment Variables
+## Rate Limits & Quotas
+
+### Global Rate Limits (Environment Variables)
 
 ```bash
 # MCP Server
 MCP_ENABLED=true
-MCP_RATE_LIMIT_READ=500
-MCP_RATE_LIMIT_WRITE=100
+MCP_RATE_LIMIT_READ=500     # Read operations per hour (global)
+MCP_RATE_LIMIT_WRITE=100    # Write operations per hour (global)
 
 # App Framework
 APP_FRAMEWORK_ENABLED=true
@@ -1345,7 +2863,114 @@ APP_EXECUTION_TIMEOUT=300000  # 5 minutes
 ANTHROPIC_API_KEY=sk-ant-...
 ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
 AI_MAX_TOKENS=2000
-AI_RATE_LIMIT_PER_MINUTE=60
+AI_RATE_LIMIT_PER_MINUTE=60  # Global rate limit
+```
+
+### Per-Tenant Rate Limits
+
+Each tenant has individual rate limits to ensure fair resource allocation:
+
+```typescript
+interface TenantRateLimits {
+  tenant_id: string;
+
+  // AI API limits
+  ai_calls_per_hour: number;        // Default: 500
+  ai_calls_per_day: number;         // Default: 5000
+  ai_tokens_per_day: number;        // Default: 1,000,000
+
+  // App execution limits
+  app_executions_per_hour: number;  // Default: 100
+  emails_per_day: number;           // Default: 10,000
+
+  // Chatbox limits
+  chatbox_messages_per_hour: number; // Default: 50
+
+  // Override timestamp (for temporary increases)
+  override_until?: Date;
+}
+```
+
+### Rate Limit Tiers
+
+| Tier | AI Calls/Hour | AI Calls/Day | Tokens/Day | App Executions/Hour |
+|------|---------------|--------------|------------|---------------------|
+| **Free** | 100 | 500 | 100,000 | 20 |
+| **Starter** | 300 | 2,000 | 500,000 | 50 |
+| **Pro** | 500 | 5,000 | 1,000,000 | 100 |
+| **Enterprise** | Custom | Custom | Custom | Custom |
+
+### Rate Limit Enforcement
+
+```typescript
+class RateLimitService {
+  async checkLimit(
+    tenant_id: string,
+    limit_type: 'ai_calls' | 'executions' | 'emails' | 'chatbox'
+  ): Promise<{ allowed: boolean; remaining: number; reset_at: Date }> {
+    const limits = await this.getTenantLimits(tenant_id);
+    const usage = await this.getUsage(tenant_id, limit_type);
+
+    const limit = limits[`${limit_type}_per_hour`];
+    const remaining = Math.max(0, limit - usage.count);
+
+    return {
+      allowed: remaining > 0,
+      remaining,
+      reset_at: usage.window_end,
+    };
+  }
+
+  async incrementUsage(tenant_id: string, limit_type: string): Promise<void> {
+    // Use Redis INCR with TTL for sliding window
+    const key = `rate_limit:${tenant_id}:${limit_type}:${this.getCurrentWindow()}`;
+    await this.redis.incr(key);
+    await this.redis.expire(key, 3600);  // 1 hour TTL
+  }
+}
+```
+
+### Rate Limit Response Headers
+
+API responses include rate limit info:
+
+```
+X-RateLimit-Limit: 500
+X-RateLimit-Remaining: 342
+X-RateLimit-Reset: 1706540400
+```
+
+### Quota Exceeded Handling
+
+When a tenant exceeds their quota:
+
+```typescript
+class AppExecutorService {
+  async execute(app: App, context: ExecutionContext) {
+    const rateCheck = await this.rateLimitService.checkLimit(
+      app.tenant_id,
+      'ai_calls'
+    );
+
+    if (!rateCheck.allowed) {
+      // Log the skip
+      await this.logExecution(app, {
+        status: 'RATE_LIMITED',
+        message: `Rate limit exceeded. Resets at ${rateCheck.reset_at}`,
+      });
+
+      // Optionally reschedule for later
+      if (app.config.settings?.reschedule_on_rate_limit) {
+        await this.rescheduleExecution(app, rateCheck.reset_at);
+      }
+
+      return;
+    }
+
+    // Proceed with execution
+    await this.runAppPipeline(app, context);
+  }
+}
 ```
 
 ---
