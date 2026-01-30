@@ -44,31 +44,31 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 
 ## Table of Contents
 
-1. Executive Summary
-2. How Micro-Apps Help Decommerce *(business value)*
-3. Vision & Goals
-4. What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*
-5. Why MCP + Micro-Apps?
-6. System Architecture
-7. Part 1: MCP Server
-8. Part 2: App Framework
-9. Part 3: Admin Panel AI Chatbox
-10. Micro-App Catalog
-11. Real-World Decommerce Scenarios *(end-to-end examples)*
-12. App Configuration Schema
-13. Variable Interpolation
-14. App Configuration Validation
-15. Data Connectors
-16. Logic Transformations
-17. Action Executors
-18. Triggers System
-19. Execution Safeguards
-20. Error Recovery & Retry
-21. Rate Limits & Quotas
-22. Implementation Phases
-23. Testing & Verification
-24. Troubleshooting
-25. Key Reference Files
+1. [Executive Summary](#executive-summary)
+2. [How Micro-Apps Help Decommerce *(business value)*](#how-micro-apps-help-decommerce)
+3. [Vision & Goals](#vision--goals)
+4. [What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*](#what-micro-apps-can-and-cannot-do)
+5. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
+6. [System Architecture](#system-architecture)
+7. [Part 1: MCP Server](#part-1-mcp-server)
+8. [Part 2: App Framework](#part-2-app-framework)
+9. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
+10. [Micro-App Catalog](#micro-app-catalog)
+11. [Real-World Decommerce Scenarios *(end-to-end examples)*](#real-world-decommerce-scenarios)
+12. [App Configuration Schema](#app-configuration-schema)
+13. [Variable Interpolation](#variable-interpolation)
+14. [App Configuration Validation](#app-configuration-validation)
+15. [Data Connectors](#data-connectors)
+16. [Logic Transformations](#logic-transformations)
+17. [Action Executors](#action-executors)
+18. [Triggers System](#triggers-system)
+19. [Execution Safeguards](#execution-safeguards)
+20. [Error Recovery & Retry](#error-recovery--retry)
+21. [Rate Limits & Quotas](#rate-limits--quotas)
+22. [Implementation Phases](#implementation-phases)
+23. [Testing & Verification](#testing--verification)
+24. [Troubleshooting](#troubleshooting)
+25. [Key Reference Files](#key-reference-files)
 
 ---
 
