@@ -1,6 +1,6 @@
 # Decommerce MCP + AI Micro-Apps — Technical Specification (No-Code Version)
 
-This is a **plain-English** version of the technical specification in `README.md`. It explains the **same system and requirements**, but **without any code snippets**.
+This is a **plain-English** version of the technical specification in `MCP-integration-technical.md`. It explains the **same system and requirements**, but **without any code snippets**.
 
 ---
 
@@ -8,25 +8,26 @@ This is a **plain-English** version of the technical specification in `README.md
 
 1. Executive Summary
 2. Vision & Goals
-3. Why MCP + Micro-Apps?
-4. System Architecture
-5. Part 1: MCP Server
-6. Part 2: App Framework
-7. Part 3: Admin Panel AI Chatbox
-8. Micro-App Catalog
-9. App Configuration Schema (Described)
-10. Variable Interpolation (Described)
-11. App Configuration Validation (Described)
-12. Data Connectors (Described)
-13. Logic Transformations (Described)
-14. Action Executors (Described)
-15. Triggers System (Described)
-16. Execution Safeguards
-17. Error Recovery & Retry
-18. Rate Limits & Quotas
-19. Implementation Phases
-20. Testing & Verification
-21. Key Reference Files
+3. What Micro-Apps Can and Cannot Do *(Limitations & Boundaries)*
+4. Why MCP + Micro-Apps?
+5. System Architecture
+6. Part 1: MCP Server
+7. Part 2: App Framework
+8. Part 3: Admin Panel AI Chatbox
+9. Micro-App Catalog
+10. App Configuration Schema (Described)
+11. Variable Interpolation (Described)
+12. App Configuration Validation (Described)
+13. Data Connectors (Described)
+14. Logic Transformations (Described)
+15. Action Executors (Described)
+16. Triggers System (Described)
+17. Execution Safeguards
+18. Error Recovery & Retry
+19. Rate Limits & Quotas
+20. Implementation Phases
+21. Testing & Verification
+22. Key Reference Files
 
 ---
 
@@ -70,6 +71,90 @@ Admin asks AI → AI designs the app configuration → app becomes active and ru
 - AI writing real application code (new React components, new backend modules).
 - Apps requiring new database tables or new UI pages/components.
 - Major platform features unrelated to automation (payments, DM, video chat, etc.).
+
+---
+
+## What Micro-Apps Can and Cannot Do
+
+This section sets clear expectations about the capabilities and boundaries of the micro-app system.
+
+### What Micro-Apps CAN Do
+
+| Capability | Examples |
+|------------|----------|
+| **Fetch platform data** | Get users, posts, missions, Shopify orders, engagement metrics |
+| **Send communications** | Emails, push notifications, in-app notifications |
+| **Create content** | Posts, comments, missions, rewards |
+| **Update records** | User fields, post status, content flags |
+| **Use AI** | Generate personalized text, analyze content quality, make decisions |
+| **Run on schedules** | Daily, weekly, monthly, custom cron expressions |
+| **React to events** | User signup, post created, order placed, mission completed |
+| **Loop over items** | Process up to 1,000 users/posts/orders per execution |
+| **Apply conditions** | Only act when specific criteria are met |
+| **Call external URLs** | Webhooks to pre-approved domains |
+
+### What Micro-Apps CANNOT Do
+
+| Limitation | Reason | Alternative |
+|------------|--------|-------------|
+| **Create custom UI** | Cannot add new pages, buttons, modals, or visual components | Request as core platform feature |
+| **Create database tables** | Cannot add new tables or columns to store custom data | Request as core platform feature |
+| **Connect to external services** | Cannot integrate with Slack, Discord, Stripe, Mailchimp directly (beyond webhooks) | Request as core platform feature |
+| **Process files** | Cannot upload, download, or manipulate images, PDFs, videos | Request as core platform feature |
+| **Run complex logic** | No nested if-else chains, custom functions, or programming constructs | Keep apps simple; split into multiple apps |
+| **Perform custom calculations** | Limited to built-in aggregations (sum, avg, count, min, max) | Request as core platform feature |
+| **Operate in real-time** | Apps are triggered (batch), not live/interactive | Use platform's real-time features |
+| **Wait for human approval** | Cannot pause mid-execution for user input | Use confirmation before app creation instead |
+| **Trigger other apps** | App A cannot start App B | Create combined app or use events |
+| **Rollback on failure** | If action 3 fails, actions 1-2 are NOT undone | Design actions to be safe if incomplete |
+
+### Volume & Performance Boundaries
+
+| Boundary | Typical Limit | Impact |
+|----------|---------------|--------|
+| **Items per loop** | 1,000 | Cannot email 50,000 users in one run; split across multiple runs |
+| **Execution timeout** | 5 minutes | Cannot process very large datasets in one execution |
+| **AI calls per execution** | 100 | Cannot generate unique content for thousands of users at once |
+| **Emails per execution** | 500 | High-volume campaigns need multiple scheduled runs |
+| **Apps per tenant** | 50 | Focus on essential automations |
+
+### Scheduling Boundaries
+
+| Boundary | Impact |
+|----------|--------|
+| **Minimum interval** | Cannot run more frequently than once per minute |
+| **Single timezone** | Each scheduled app uses one timezone; cannot auto-adjust per user |
+| **No business-day logic** | Cannot automatically skip weekends/holidays |
+
+### Data Access Boundaries
+
+| Boundary | Impact |
+|----------|--------|
+| **Read via connectors only** | Cannot run arbitrary database queries |
+| **Write via actions only** | Cannot directly UPDATE/DELETE records outside defined actions |
+| **Tenant isolation** | Cannot access data from other tenants |
+| **Current data only** | Cannot query historical snapshots ("users as of last month") |
+
+### Security Boundaries
+
+| Boundary | Reason |
+|----------|--------|
+| **No stored secrets** | Cannot save API keys for external services |
+| **Webhook allowlist** | Can only call pre-approved external URLs |
+| **No code execution** | Cannot run JavaScript, Python, or SQL snippets |
+| **No internal network access** | Cannot call localhost, private IPs, or cloud metadata |
+
+### When to Request a Core Feature Instead
+
+If you need any of the following, contact the development team to build it as a platform feature:
+
+- Custom integrations (Slack notifications, Stripe payments, social login)
+- New UI components (custom dashboards, widgets, forms)
+- Processing large volumes (100K+ records)
+- Complex business rules (multi-step approvals, workflow engines)
+- File handling (image resizing, PDF generation, imports/exports)
+- A/B testing or experimentation
+- Custom analytics or reporting dashboards
 
 ---
 
