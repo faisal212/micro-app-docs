@@ -19,9 +19,11 @@ This is a planning document. Unless a section explicitly says “we already do t
 
 ## Glossary (quick definitions)
 
-- **Micro-app**: A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not “custom code”.
+- **Micro-app**: A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not "custom code".
 - **MCP server**: The protocol layer exposing safe, tenant-scoped tools/resources that an AI agent can call.
 - **App Framework**: The runtime that stores, validates, schedules, executes, and logs micro-apps.
+- **AI Provider**: The LLM service that interprets admin requests and generates app configs. Admins can choose between Claude, ChatGPT, Gemini, etc.
+- **Provider Adapter**: Translates between our tool definitions and each AI's specific format (Claude's tool_use, OpenAI's function calling, etc.).
 - **Connector**: A read-only data fetch step (e.g., users, missions, shopify orders).
 - **Action**: A side-effect or control-flow step (e.g., award XP, create post, request approval).
 - **Trigger**: What causes execution (scheduled, event-driven, manual, delayed).
@@ -38,7 +40,9 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 - **Open questions**:
   - Do we want a single global execution timeout, or per-action/per-connector timeouts too?
   - Where do we enforce email/webhook quotas: at MCP tool-level, execution runtime, or both?
-  - Which parts of “UI widgets” are v1 vs later (cards/leaderboards/charts)?
+  - Which parts of "UI widgets" are v1 vs later (cards/leaderboards/charts)?
+  - Which AI provider(s) do we ship with in v1? (Claude + OpenAI seem like the obvious starting pair)
+  - Do we let tenants bring their own API keys, or do we provide a pooled key with usage metering?
 
 ---
 
@@ -86,9 +90,11 @@ Why this matters for Decommerce: we already have strong primitives (users, rooms
 | App Framework | Engine that stores, runs, and manages micro-apps | Backend (NestJS) |
 | AI Chatbox | Interface where admins describe apps in natural language | Admin Panel (React) |
 
+Admins can choose which AI provider powers their chatbox—Claude, ChatGPT, Gemini, or others. The system works the same way regardless of provider; only the "brain" changes.
+
 **Example flow:**
 - Admin requests: "Create an app that awards 500 XP to users who complete their first mission and posts a welcome message in the #announcements room."
-- AI interprets intent and produces an **app configuration** (not executable code).
+- The chosen AI (Claude, ChatGPT, Gemini, etc.) interprets intent and produces an **app configuration** (not executable code).
 - App Framework will validate, store, and activate the app configuration.
 - The app will run based on its trigger (event-driven/scheduled/manual).
 
@@ -387,6 +393,7 @@ Contact the development team only if you need:
 
 - **No-code app creation**: admins describe what they want.
 - **AI-powered**: apps can incorporate AI analysis/generation steps.
+- **Provider choice**: admins pick their preferred AI (Claude, ChatGPT, Gemini)—no vendor lock-in.
 - **Persistent automation**: runs continuously on events/schedules.
 - **Platform differentiation**: a unique, AI-native automation layer.
 
@@ -411,7 +418,8 @@ The catalog includes 35+ examples across:
 │                         ADMIN PANEL (React)                              │
 │                                                                         │
 │  - AI Chatbox (streaming conversation)                                  │
-│  - App Confirmation (optional “approve tool action?” gate)              │
+│  - Provider selector (Claude / ChatGPT / Gemini / etc.)                 │
+│  - App Confirmation (optional "approve tool action?" gate)              │
 │  - Apps Management UI (list / details / logs / run / pause / resume)    │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -419,25 +427,46 @@ The catalog includes 35+ examples across:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      DECOMMERCE BACKEND (NestJS)                         │
 │                                                                         │
-│  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────────┐   │
-│  │   MCP Server    │   │  App Framework  │   │     AI Service       │   │
-│  │ (tools/resources)│  │ (runtime engine)│   │ (Claude or similar)  │   │
-│  └─────────────────┘   └─────────────────┘   └─────────────────────┘   │
-│           │                     │                       │              │
-│           └───────────────┬─────┴───────────────┬───────┘              │
-│                           ▼                     ▼                      │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    AI Provider Abstraction                       │   │
+│  │   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐    │   │
+│  │   │  Claude  │   │  OpenAI  │   │  Gemini  │   │  Future  │    │   │
+│  │   │  Adapter │   │  Adapter │   │  Adapter │   │ Providers│    │   │
+│  │   └──────────┘   └──────────┘   └──────────┘   └──────────┘    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│           │                                                             │
+│           ▼                                                             │
+│  ┌─────────────────┐   ┌─────────────────┐                             │
+│  │   MCP Server    │   │  App Framework  │                             │
+│  │ (tools/resources)│  │ (runtime engine)│                             │
+│  └─────────────────┘   └─────────────────┘                             │
+│           │                     │                                       │
+│           └───────────────┬─────┘                                       │
+│                           ▼                                             │
 │        Existing Decommerce Services        Tenant DB (PostgreSQL)       │
 │     (Users/Rooms/Posts/Missions/etc.)   (apps, executions, logs, data)  │
 └─────────────────────────────────────────────────────────────────────────┘
 </pre>
 
+### Why provider choice matters
+
+We're not locking into a single AI vendor. Admins can pick whichever provider they prefer (or already have API access to). The system works the same regardless of which AI is doing the thinking—Claude, ChatGPT, Gemini, or whatever comes next.
+
+This works because:
+- **The MCP tools are the constant.** The same `create_app`, `list_users`, `award_xp` tools work identically no matter which AI calls them.
+- **Each provider adapter translates formats.** Claude uses "tool_use", OpenAI uses "function calling", Gemini has its own format—the adapter handles the translation.
+- **The output is always a structured config.** Whichever AI generates the app configuration, the App Framework validates and runs it the same way.
+
+Tenant admins can configure their preferred provider in settings. Some might use Claude for its reasoning, others ChatGPT for familiarity, others Gemini because their org already has a Google Cloud relationship. The point is: it's their choice.
+
 - **Admin Panel (React)**
-  - AI chatbox for “describe an app” interactions.
-  - Apps management UI (list, details, logs, pause/resume, run).
+  - AI chatbox for "describe an app" interactions
+  - Provider selector (choose Claude, ChatGPT, Gemini, etc.)
+  - Apps management UI (list, details, logs, pause/resume, run)
 - **Decommerce Backend (NestJS)**
+  - AI Provider Abstraction (adapters for each supported AI)
   - MCP Server (tools AI can call)
   - App Framework (storage, triggers, execution, monitoring)
-  - AI Service (calls to the model provider, e.g., Claude)
 - **Existing Decommerce services**
   - Users, Rooms, Posts, Missions, Rewards, Shopify, Email/Notifications
 - **Tenant database (PostgreSQL)**
@@ -446,34 +475,38 @@ The catalog includes 35+ examples across:
 ### Request flow: creating an app
 
 <pre>
-┌──────────┐   ┌───────────────┐   ┌─────────────┐   ┌──────────────┐   ┌──────────────┐
-│  Admin   │   │ Admin Backend │   │ AI Provider │   │  MCP Server   │   │ App Framework │
-│  Panel   │   │   (NestJS)    │   │ (e.g Claude)│   │ (tool layer)  │   │ (store+rules) │
-└────┬─────┘   └──────┬────────┘   └──────┬──────┘   └──────┬───────┘   └──────┬───────┘
-     │                 │                   │                 │                  │
-     │ “Create app …”  │                   │                 │                  │
-     ├────────────────▶│                   │                 │                  │
-     │                 │  chat+tools list  │                 │                  │
-     │                 ├──────────────────▶│                 │                  │
-     │                 │                   │ decides to use  │                  │
-     │                 │                   │ create_app tool │                  │
-     │                 │                   ├────────────────▶│                  │
-     │                 │                   │                 │ validate+store   │
-     │                 │                   │                 ├─────────────────▶│
-     │                 │                   │                 │  result (ok/err) │
-     │                 │                   │◀────────────────┤                  │
-     │      streamed response back to UI (and app appears in list if created)   │
-     │◀────────────────────────────────────────────────────────────────────────┘
+┌──────────┐   ┌───────────────┐   ┌──────────────┐   ┌──────────────┐   ┌───────────────┐
+│  Admin   │   │ Admin Backend │   │ AI Provider  │   │  MCP Server   │   │ App Framework │
+│  Panel   │   │   (NestJS)    │   │ (chosen one) │   │ (tool layer)  │   │ (store+rules) │
+└────┬─────┘   └──────┬────────┘   └──────┬───────┘   └──────┬───────┘   └──────┬────────┘
+     │                 │                   │                  │                  │
+     │ "Create app …"  │                   │                  │                  │
+     │ + provider pref │                   │                  │                  │
+     ├────────────────▶│                   │                  │                  │
+     │                 │  chat+tools list  │                  │                  │
+     │                 │  (adapted format) │                  │                  │
+     │                 ├──────────────────▶│                  │                  │
+     │                 │                   │ decides to use   │                  │
+     │                 │                   │ create_app tool  │                  │
+     │                 │                   ├─────────────────▶│                  │
+     │                 │                   │                  │ validate+store   │
+     │                 │                   │                  ├─────────────────▶│
+     │                 │                   │                  │  result (ok/err) │
+     │                 │                   │◀─────────────────┤                  │
+     │      streamed response back to UI (and app appears in list if created)    │
+     │◀─────────────────────────────────────────────────────────────────────────┘
 </pre>
 
-1. Admin sends a natural-language request from the chatbox UI.
-2. Backend forwards it to the AI provider with:
+1. Admin sends a natural-language request from the chatbox UI. Their provider preference (Claude, ChatGPT, Gemini) travels with the request.
+2. Backend picks the right adapter and forwards the request to the chosen AI provider with:
    - a system instruction (tenant context, allowed tools),
-   - a tool list (MCP tools),
+   - a tool list (formatted for that specific provider),
    - and streaming enabled for a good UX.
 3. AI decides whether it needs clarifications or is ready to propose a full app.
 4. If ready, AI uses an MCP tool to create/store the app configuration.
 5. Backend returns success and the new app appears in the admin UI.
+
+The admin doesn't need to care about format differences between providers. The backend handles the translation—same request, same result, different AI brain.
 
 ### Request flow: app execution
 
@@ -665,9 +698,12 @@ State Transitions:
 
 The admin panel will be the control plane for humans. It will provide:
 - a chat interface to request apps in natural language,
-- streaming responses,
+- a provider selector so admins can choose which AI to use (Claude, ChatGPT, Gemini, etc.),
+- streaming responses (works with all providers),
 - optional confirmation gates for tool execution,
 - and an apps management UI (list/detail/logs/controls).
+
+Provider choice can be set as a default in tenant settings, or switched per conversation. Some admins might prefer Claude for complex reasoning tasks and ChatGPT for quick iterations—that's fine, both produce the same app configuration format.
 
 ### Endpoints (shape)
 
@@ -1237,9 +1273,10 @@ When quotas are exceeded:
 
 ### Phase 1: Foundation (Week 1–2)
 - MCP server skeleton: transport + auth + tenant context + tool registry + basic rate limiting
+- AI provider abstraction: adapter pattern for Claude, OpenAI, and Gemini (start with one, add others)
 - App storage: app + execution entities, persistence, and migrations
 - CRUD + logs: create/list/get/update/delete apps + fetch execution logs
-- “Hello world” end-to-end: create an app config and run it manually against a test tenant
+- "Hello world" end-to-end: create an app config and run it manually against a test tenant
 
 ### Phase 2: Connectors & Actions (Week 2–3)
 - Implement v1 connector set (users/rooms/posts/missions/user_missions/contributions/shopify_orders)
@@ -1358,7 +1395,10 @@ These are the existing codebase patterns to follow (module, auth guard, multi-te
 
 This system enables **AI-generated micro-apps** on Decommerce by:
 - letting admins request automations in natural language,
-- having AI output a structured app configuration,
+- giving them a choice of AI provider (Claude, ChatGPT, Gemini, etc.),
+- having the chosen AI output a structured app configuration,
 - storing and running it in a controlled runtime with connectors/actions/triggers,
 - and enforcing isolation, validation, execution limits, retries, and audit logs.
+
+The provider-agnostic design means we're not betting on a single AI vendor. As new models emerge or existing ones improve, admins can switch without any changes to their existing apps.
 
