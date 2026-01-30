@@ -5,6 +5,8 @@ This document is the plain-English companion to `MCP-integration-technical.md`. 
 **Audience**: product, engineering, ops, and anyone reviewing the micro-app/MCP direction.  
 **Not included**: implementation details, exact endpoints/DTOs, or database schema diffs (those live in the technical doc and codebase).
 
+This is a planning document. Unless a section explicitly says “we already do this today”, treat the statements below as **target behavior** we intend to implement.
+
 ---
 
 ## How to read this doc
@@ -72,7 +74,7 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 
 ## Executive Summary
 
-This system lets **tenant admins create micro-apps on the Decommerce platform** by describing what they want in plain English. Instead of building a bespoke integration for every workflow, we standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
+This system is intended to let **tenant admins create micro-apps on the Decommerce platform** by describing what they want in plain English. Instead of building a bespoke integration for every workflow, we’ll standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
 
 Why this matters for Decommerce: we already have strong primitives (users, rooms, posts, missions, rewards, Shopify, notifications). Micro-apps are the layer that turns those primitives into “one-click operations” and recurring automation without waiting on a new backend deployment for every idea.
 
@@ -87,8 +89,8 @@ Why this matters for Decommerce: we already have strong primitives (users, rooms
 **Example flow:**
 - Admin requests: "Create an app that awards 500 XP to users who complete their first mission and posts a welcome message in the #announcements room."
 - AI interprets intent and produces an **app configuration** (not executable code).
-- App Framework validates, stores, and activates the app.
-- App runs continuously based on its trigger (event-driven/scheduled/manual).
+- App Framework will validate, store, and activate the app configuration.
+- The app will run based on its trigger (event-driven/scheduled/manual).
 
 ---
 
@@ -503,7 +505,7 @@ At this point we’re out of “what” and into “how the pieces work together
 
 ## Part 1: MCP Server
 
-The MCP Server exposes **tool endpoints** and **resources** an AI agent can use to interact with Decommerce safely (and predictably). The MCP layer is where we enforce tenant context, auth, and coarse-grained read/write policy before anything touches business data.
+The MCP Server will expose **tool endpoints** and **resources** an AI agent can use to interact with Decommerce safely (and predictably). The MCP layer is where we plan to enforce tenant context, auth, and coarse-grained read/write policy before anything touches business data.
 
 ### MCP module responsibilities (responsibilities, not implementation detail)
 
@@ -519,7 +521,7 @@ The MCP Server exposes **tool endpoints** and **resources** an AI agent can use 
 
 ### MCP tools for app management
 
-**V1 must-have (minimum set):**
+**Proposed v1 scope (starting set):**
 - `create_app`, `list_apps`, `get_app`, `update_app`, `delete_app`
 - `run_app`, `pause_app`, `resume_app`
 - `get_app_logs`
@@ -551,7 +553,7 @@ These are tenant-scoped tools for listing/fetching core entities and metrics. We
 
 ## Part 2: App Framework
 
-The App Framework is the runtime engine that stores, validates, schedules, executes, and monitors micro-apps. If MCP is the “hands” an agent can use, the framework is the “operating system” that makes those hands safe at scale.
+The App Framework will be the runtime engine that stores, validates, schedules, executes, and monitors micro-apps. If MCP is the “hands” an agent can use, the framework is the “operating system” that makes those hands safe at scale.
 
 ### What the App Framework does
 
@@ -661,7 +663,7 @@ State Transitions:
 
 ## Part 3: Admin Panel AI Chatbox
 
-The admin panel is the control plane for humans. It provides:
+The admin panel will be the control plane for humans. It will provide:
 - a chat interface to request apps in natural language,
 - streaming responses,
 - optional confirmation gates for tool execution,
@@ -689,7 +691,7 @@ When confirmation is enabled:
 
 This is a reference catalog of example apps by category. Not all of these need to ship on day one; the point is to show the kinds of automations the building blocks should enable.
 
-**V1 starter pack (what we should be able to build early):**
+**Proposed v1 starter pack (what we should be able to build early):**
 
 | App | Trigger | Why it’s a good v1 test |
 |-----|---------|--------------------------|
@@ -953,7 +955,7 @@ Configurations use template placeholders to reference values available at runtim
 
 ## App Configuration Validation
 
-Before saving an AI-generated configuration, validation must pass:
+Before saving an AI-generated configuration, we will require validation to pass:
 
 ### 1) Schema validation
 Ensures:
@@ -999,7 +1001,7 @@ Connectors are read-only data access building blocks. Each connector defines:
 - allowed field selection
 - limits/offsets
 
-**V1 must-have (minimum set):**
+**Proposed v1 scope (starting set):**
 - `users`, `rooms`, `posts`
 - `missions`, `user_missions`, `contributions`
 - `shopify_orders`
@@ -1056,7 +1058,7 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 - execution logic
 - structured result output (for downstream steps or logs)
 
-**V1 must-have (minimum set):**
+**Proposed v1 scope (starting set):**
 - Communication: `send_email`, `send_notification` (and/or `send_push` if already supported)
 - Content: `create_post`
 - Users: `award_xp`, `update_user`
@@ -1086,7 +1088,7 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 | **Compensate** | on_failure (wrapper for any action) |
 
 ### Webhook security requirements
-Webhook calls must be constrained with:
+Webhook calls will be constrained with:
 - allowlisted domains (tenant-level)
 - blocked internal/private networks and cloud metadata targets
 - strict timeouts
@@ -1104,7 +1106,7 @@ Webhook calls must be constrained with:
 - **manual**: admin requests run.
 - **delayed**: on an event, schedule one or more future executions at specified delays, with optional conditions per delay.
 
-**V1 must-have (minimum set):**
+**Proposed v1 scope (starting set):**
 - Trigger types: `manual`, `scheduled`, `event` (delayed can be v1.5 if scheduling infra isn’t ready)
 - Events: `user.created`, `mission.completed`, `post.created`, `room.member_joined`, `shopify.order.created`
 
@@ -1166,9 +1168,9 @@ When a Shopify event arrives:
 ## Execution Safeguards
 
 ### Concurrent execution prevention
-- Each app execution must acquire an execution lock.
+- Each app execution will acquire an execution lock.
 - If locked, a new run is skipped to prevent overlapping execution.
-- Locks must expire to avoid stale lock deadlocks.
+- Locks will expire to avoid stale lock deadlocks.
 
 ### Limits enforcement (how the system stays stable)
 
@@ -1197,7 +1199,7 @@ When a loop fails mid-way:
 - or may restart from scratch depending on whether actions are idempotent
 
 ### Idempotency markers
-For actions that must not repeat (like sending emails), use idempotency keys so retries do not duplicate side effects.
+For actions that should not repeat (like sending emails), we’ll use idempotency keys so retries do not duplicate side effects.
 
 ---
 
