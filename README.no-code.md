@@ -72,7 +72,9 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 
 ## Executive Summary
 
-This system allows **AI to create micro-apps on the Decommerce platform**. Unlike Shopify where human developers build apps, here **AI generates apps on the fly** based on admin requests via a chatbox interface.
+This system lets **tenant admins create micro-apps on the Decommerce platform** by describing what they want in plain English. Instead of building a bespoke integration for every workflow, we standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
+
+Why this matters for Decommerce: we already have strong primitives (users, rooms, posts, missions, rewards, Shopify, notifications). Micro-apps are the layer that turns those primitives into “one-click operations” and recurring automation without waiting on a new backend deployment for every idea.
 
 **The system has three parts:**
 
@@ -137,7 +139,7 @@ This system directly addresses Decommerce's core business challenges:
 ### Vision
 
 AI can assemble platform capabilities into “micro-apps” on demand:
-Admin asks AI → AI designs the app configuration → app becomes active and runs.
+Admin asks AI → AI produces an app configuration → Decommerce runs it safely.
 
 ### Goals
 
@@ -497,8 +499,6 @@ The catalog includes 35+ examples across:
 
 ---
 
-## Part 1: MCP Server
-
 At this point we’re out of “what” and into “how the pieces work together”. The rest of the doc breaks the system into three parts that match how we’ll ship it: the MCP surface (tools/resources), the runtime (store + execute), and the admin UI (chat + control plane).
 
 ## Part 1: MCP Server
@@ -519,6 +519,11 @@ The MCP Server exposes **tool endpoints** and **resources** an AI agent can use 
 
 ### MCP tools for app management
 
+**V1 must-have (minimum set):**
+- `create_app`, `list_apps`, `get_app`, `update_app`, `delete_app`
+- `run_app`, `pause_app`, `resume_app`
+- `get_app_logs`
+
 | Tool | Purpose |
 |------|---------|
 | create_app | Create a micro-app by saving an app configuration |
@@ -533,7 +538,7 @@ The MCP Server exposes **tool endpoints** and **resources** an AI agent can use 
 
 ### MCP tools for data access
 
-These are tenant-scoped tools for listing/fetching core entities and metrics, for example:
+These are tenant-scoped tools for listing/fetching core entities and metrics. We should start narrow and expand as we learn what admins actually automate most:
 - list/get users
 - list/get rooms
 - list/create posts (where appropriate)
@@ -682,7 +687,19 @@ When confirmation is enabled:
 
 ## Micro-App Catalog
 
-This is a reference catalog of example apps by category with specific Decommerce use cases:
+This is a reference catalog of example apps by category. Not all of these need to ship on day one; the point is to show the kinds of automations the building blocks should enable.
+
+**V1 starter pack (what we should be able to build early):**
+
+| App | Trigger | Why it’s a good v1 test |
+|-----|---------|--------------------------|
+| Welcome XP Bonus | `user.created` | Exercises event triggers + awarding XP + posting |
+| Room Welcome | `room.member_joined` | Simple event-driven messaging |
+| Mission Completion Congrats | `mission.completed` | Common workflow; clear success criteria |
+| Weekly XP Digest | scheduled | Exercises scheduling + aggregations + email |
+| Reward Reminder | scheduled | Exercises filtering + notifications |
+| Purchase Thank You | `shopify.order.created` | Exercises Shopify mapping + user matching |
+| Content Moderator (basic) | `post.created` | Exercises AI step + moderation action |
 
 ### Email & Communication
 | App Name | Trigger | What It Does |
@@ -982,6 +999,11 @@ Connectors are read-only data access building blocks. Each connector defines:
 - allowed field selection
 - limits/offsets
 
+**V1 must-have (minimum set):**
+- `users`, `rooms`, `posts`
+- `missions`, `user_missions`, `contributions`
+- `shopify_orders`
+
 ### Available Connectors
 
 | Connector | Description | Key Filters |
@@ -1034,6 +1056,13 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 - execution logic
 - structured result output (for downstream steps or logs)
 
+**V1 must-have (minimum set):**
+- Communication: `send_email`, `send_notification` (and/or `send_push` if already supported)
+- Content: `create_post`
+- Users: `award_xp`, `update_user`
+- Flow control: `for_each`, `condition`, `request_approval`
+- Integrations (only if configured): `klaviyo.sync_profile`, `klaviyo.add_to_list`
+
 ### Available Actions
 
 | Category | Actions |
@@ -1074,6 +1103,10 @@ Webhook calls must be constrained with:
 - **event**: platform emits events; event listener triggers matching apps.
 - **manual**: admin requests run.
 - **delayed**: on an event, schedule one or more future executions at specified delays, with optional conditions per delay.
+
+**V1 must-have (minimum set):**
+- Trigger types: `manual`, `scheduled`, `event` (delayed can be v1.5 if scheduling infra isn’t ready)
+- Events: `user.created`, `mission.completed`, `post.created`, `room.member_joined`, `shopify.order.created`
 
 ### Available Events
 
@@ -1201,52 +1234,51 @@ When quotas are exceeded:
 ## Implementation Phases
 
 ### Phase 1: Foundation (Week 1–2)
-- MCP server setup (transport, auth, tool registry, basic rate limiting)
-- App entities and storage
-- App CRUD service
-- App MCP tools for create/list/update/delete/run
-- Database migrations
+- MCP server skeleton: transport + auth + tenant context + tool registry + basic rate limiting
+- App storage: app + execution entities, persistence, and migrations
+- CRUD + logs: create/list/get/update/delete apps + fetch execution logs
+- “Hello world” end-to-end: create an app config and run it manually against a test tenant
 
 ### Phase 2: Connectors & Actions (Week 2–3)
-- Implement connectors for core Decommerce data sources
-- Implement action executors (email/post/notification/etc.)
-- Implement the app executor (pipeline + actions)
-- Integrate AI generation/analysis for AI steps
+- Implement v1 connector set (users/rooms/posts/missions/user_missions/contributions/shopify_orders)
+- Implement v1 action set (award_xp, create_post, send_notification/send_email, basic flow control)
+- Executor runtime: pipeline → transforms → actions, with logging + stop conditions
+- AI step integration (guardrails + prompt templates + output stored in execution context)
 
 ### Phase 3: Triggers System (Week 3–4)
-- Scheduler for cron-based apps
-- Event listeners for platform events
-- Manual run support
-- Delayed trigger scheduling and processing
+- Scheduler for cron-based apps (minimum: once per minute)
+- Event listeners for platform events (user/mission/post/room/shopify v1 set)
+- Manual run support (admin clicks “Run now”)
+- Delayed triggers if feasible; otherwise document as v1.5
 
 ### Phase 4: Admin Panel UI (Week 4–5)
-- Chatbox UI with streaming
-- Apps list and app details pages
-- Execution logs viewer
+- Chatbox UI with streaming responses + tool confirmation UI
+- Apps list + app details pages (config preview + status + last run)
+- Execution history/log viewer (search/filter by status)
 - Pause/resume/run controls
-- Confirmation flow for tool execution
+- Basic “dry run / validate-only” path if supported by backend
 
 ### Phase 5: Testing & Polish (Week 5–6)
-- Unit tests for connectors, actions, validation
-- Integration tests for full execution flows
-- Robust error handling and admin notifications
-- Documentation and performance tuning
+- Unit tests for: validation, v1 connectors/actions, execution stop conditions
+- Integration tests: event trigger → pipeline → action side effect (in staging)
+- Error handling: retries, idempotency where needed, auto-pause + notifications
+- Docs + tuning: performance, quotas, and operational dashboards
 
 ---
 
 ## Testing & Verification
 
-### Test cases (conceptual)
-- create app through the AI flow and confirm it is stored
-- scheduled trigger runs at the expected time
-- event trigger runs when the matching event occurs
-- connectors return filtered data correctly
-- email and notification actions perform side effects correctly
-- AI steps produce outputs and are stored in execution context
-- loop actions handle N items and enforce limits
-- failures are logged and retries behave as configured
-- pause/resume prevents and restores execution as expected
-- logs can be queried and displayed in admin UI
+### Test cases (what we should be able to prove)
+- **Create app via chat flow**: AI proposes a config → confirmation (if enabled) → app is stored and appears in apps list
+- **Manual run**: “Run now” executes the pipeline/actions and writes an execution record
+- **Scheduled run**: cron trigger fires on time and doesn’t overlap if the prior run is still locked
+- **Event run**: a known platform event triggers the correct app(s) with correct tenant scoping
+- **Connector correctness**: filters/operators are validated and results are bounded/paginated
+- **Action correctness**: side effects happen once (idempotency where required), failures are reported clearly
+- **AI step persistence**: AI outputs are captured into the execution context and show up in logs
+- **Limit enforcement**: loop caps/timeouts/quota counters stop execution and log “why” (not just “failed”)
+- **Pause/resume**: paused apps don’t run; resuming restores scheduling/event triggers
+- **Observability**: logs can be queried and rendered in the admin UI without manual DB access
 
 ### Manual testing checklist (conceptual)
 - create a “Weekly Digest” via chatbox and verify it appears
