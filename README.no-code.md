@@ -7,29 +7,31 @@ This is a **plain-English** version of the technical specification in `MCP-integ
 ## Table of Contents
 
 1. Executive Summary
-2. Vision & Goals
-3. What Micro-Apps Can and Cannot Do *(Limitations & Boundaries)*
+2. How Micro-Apps Help Decommerce *(Business Value)*
+3. Vision & Goals
+4. What Micro-Apps Can and Cannot Do *(Limitations & Boundaries)*
    - Enhanced Capabilities Details
-4. Why MCP + Micro-Apps?
-5. System Architecture
-6. Part 1: MCP Server
-7. Part 2: App Framework
-8. Part 3: Admin Panel AI Chatbox
-9. Micro-App Catalog
-10. App Configuration Schema (Described)
-11. Variable Interpolation (Described)
-12. App Configuration Validation (Described)
-13. Data Connectors (Described)
-14. Logic Transformations (Described)
-15. Action Executors (Described)
-16. Triggers System (Described)
-17. Execution Safeguards
-18. Error Recovery & Retry
-19. Rate Limits & Quotas
-20. Implementation Phases
-21. Testing & Verification
-22. Troubleshooting *(NEW)*
-23. Key Reference Files
+5. Why MCP + Micro-Apps?
+6. System Architecture
+7. Part 1: MCP Server
+8. Part 2: App Framework
+9. Part 3: Admin Panel AI Chatbox
+10. Micro-App Catalog
+11. Real-World Decommerce Scenarios *(End-to-End Examples)*
+12. App Configuration Schema (Described)
+13. Variable Interpolation (Described)
+14. App Configuration Validation (Described)
+15. Data Connectors (Described)
+16. Logic Transformations (Described)
+17. Action Executors (Described)
+18. Triggers System (Described)
+19. Execution Safeguards
+20. Error Recovery & Retry
+21. Rate Limits & Quotas
+22. Implementation Phases
+23. Testing & Verification
+24. Troubleshooting
+25. Key Reference Files
 
 ---
 
@@ -46,10 +48,52 @@ This system allows **AI to create micro-apps on the Decommerce platform**. Unlik
 | AI Chatbox | Interface where admins describe apps in natural language | Admin Panel (React) |
 
 **Example flow:**
-- Admin requests: “Create an app that detects low-quality posts and flags them for review.”
+- Admin requests: "Create an app that awards 500 XP to users who complete their first mission and posts a welcome message in the #announcements room."
 - AI interprets intent and produces an **app configuration** (not executable code).
 - App Framework validates, stores, and activates the app.
 - App runs continuously based on its trigger (event-driven/scheduled/manual).
+
+---
+
+## How Micro-Apps Help Decommerce
+
+This system directly addresses Decommerce's core business challenges:
+
+### Community Engagement Automation
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Users complete missions but don't return | Welcome series app sends personalized follow-ups at 1, 3, 7 days |
+| Low engagement in rooms | Room Activity Booster app awards bonus XP for posting in quiet rooms |
+| Users earn XP but never claim rewards | Reward Reminder app notifies users with unclaimed rewards |
+| Leaderboard stagnation | Weekly Challenge app creates time-limited missions with bonus multipliers |
+
+### Shopify-Community Bridge
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Shopify customers don't join community | Purchase Thank You app invites buyers to community with bonus XP |
+| No correlation between purchases and engagement | VIP Buyer Rewards app awards badges to high-value customers |
+| Abandoned carts | Cart Recovery app sends community-exclusive discount codes |
+| Post-purchase silence | Review Request app triggers 7 days after order fulfillment |
+
+### Gamification Optimization
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Users don't know about new missions | Mission Announcement app posts to relevant rooms when missions launch |
+| Streak breaks discourage users | Streak Saver app sends reminder before streak expires |
+| NFT badge distribution is manual | Badge Minter app automatically mints badges when milestones hit |
+| Campaign end is anticlimactic | Campaign Finale app announces winners and distributes prizes |
+
+### Admin Efficiency
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Manual weekly reports | Weekly Digest app emails engagement metrics every Monday |
+| Spam/low-quality posts | Content Moderator app uses AI to flag suspicious posts |
+| Inactive users clutter analytics | Churn Alert app identifies users inactive for 30+ days |
+| No visibility into mission performance | Mission Analytics app tracks completion rates by mission type |
 
 ---
 
@@ -83,38 +127,38 @@ This section sets clear expectations about the capabilities and boundaries of th
 
 ### What Micro-Apps CAN Do
 
-| Capability | Examples |
-|------------|----------|
-| **Fetch platform data** | Get users, posts, missions, Shopify orders, engagement metrics |
-| **Send communications** | Emails, push notifications, in-app notifications |
-| **Create content** | Posts, comments, missions, rewards |
-| **Update records** | User fields, post status, content flags |
-| **Use AI** | Generate personalized text, analyze content quality, make decisions |
-| **Run on schedules** | Daily, weekly, monthly, custom cron expressions |
-| **React to events** | User signup, post created, order placed, mission completed |
-| **Loop over items** | Process up to 5,000 users/posts/orders per execution |
-| **Apply conditions** | Only act when specific criteria are met |
-| **Display UI widgets** | Dashboard cards, stat widgets, charts, tables in designated areas |
-| **Trigger other apps** | App A emits event → App B listens and runs |
-| **Store app state** | Key-value storage for tracking data between executions |
-| **Use pre-built integrations** | Slack, Discord, Mailchimp via platform connectors |
-| **Process files (basic)** | Generate PDF from template, resize images via pre-built actions |
-| **Request human approval** | Pause execution, await admin approval, then continue |
-| **Call external URLs** | Webhooks to pre-approved domains |
+| Capability | Decommerce Examples |
+|------------|---------------------|
+| **Fetch platform data** | Users with completed missions, active room members, Shopify order history, XP leaderboards |
+| **Send communications** | Mission completion congratulations, streak expiring warnings, reward available alerts |
+| **Create content** | Auto-post mission announcements, weekly leaderboard updates, campaign kickoff posts |
+| **Update records** | Award XP on mission completion, update engagement scores, flag posts for review |
+| **Use AI** | Generate personalized mission recommendations, analyze post quality, create celebration messages |
+| **Run on schedules** | Daily streak reminders, weekly XP digests, monthly campaign reports |
+| **React to events** | On mission.completed → award bonus XP; on shopify.order.created → create welcome mission |
+| **Loop over items** | Process up to 5,000 users for mass XP awards or notification campaigns |
+| **Apply conditions** | Only award badge if user has 1000+ XP and completed 10+ missions |
+| **Display UI widgets** | Mission completion rate chart, top contributors leaderboard, room activity heatmap |
+| **Trigger other apps** | "Mission Completed" app emits event → "Badge Award" app mints NFT badge |
+| **Store app state** | Track last leaderboard snapshot to detect rank changes between runs |
+| **Use pre-built integrations** | Sync new members to Klaviyo, post achievements to Discord, notify via Slack |
+| **Process files (basic)** | Generate PDF certificates for campaign winners, resize user-uploaded images |
+| **Request human approval** | Mass XP adjustment waits for admin approval before executing |
+| **Call external URLs** | Webhooks to external analytics platforms or CRM systems |
 
 ### Enhanced Capabilities (Configuration-Based)
 
 These powerful features work through configuration, not custom code:
 
-| Feature | How It Works | Example |
-|---------|--------------|---------|
-| **UI Widgets** | Select from pre-built widget types, configure data source | Show "Top 10 Users" leaderboard card on dashboard |
-| **App Chaining** | Define events apps can emit; other apps listen | "Order Shipped" app triggers "Send Review Request" app |
-| **State Storage** | Key-value store per app for persistence | Track "last_processed_date" between runs |
-| **Approval Queues** | Action pauses at approval step until admin approves | Email blast waits for admin OK before sending |
-| **Compensating Actions** | Define "undo" action if later steps fail | If reward fails, don't send the notification |
-| **Pre-built Integrations** | Platform provides connectors for popular services | Send to Slack channel via `slack.send_message` action |
-| **Template-based Files** | Generate documents from templates | PDF receipt from order data |
+| Feature | How It Works | Decommerce Example |
+|---------|--------------|-------------------|
+| **UI Widgets** | Select from pre-built widget types, configure data source | "Top 10 Mission Completers This Week" leaderboard on community dashboard |
+| **App Chaining** | Define events apps can emit; other apps listen | "Mission Milestone" app emits event → "NFT Badge Minter" app mints celebratory badge |
+| **State Storage** | Key-value store per app for persistence | Track "last_leaderboard_positions" to detect when users climb or drop ranks |
+| **Approval Queues** | Action pauses at approval step until admin approves | Mass XP adjustment (10,000+ XP) waits for admin approval before executing |
+| **Compensating Actions** | Define "undo" action if later steps fail | If NFT mint fails, revert XP award and notify admin |
+| **Pre-built Integrations** | Platform provides connectors for popular services | Sync new community members to Klaviyo list automatically |
+| **Template-based Files** | Generate documents from templates | PDF certificate for campaign winners with XP stats and badges earned |
 
 ### How Enhanced Capabilities Work
 
@@ -122,7 +166,10 @@ These powerful features work through configuration, not custom code:
 - **Actions**: `set_state` (save value), `get_state` (retrieve value), `delete_state` (remove key)
 - **Scope**: Per-app key-value store (isolated per app)
 - **Limits**: 100 keys per app, 10KB max per value
-- **Use case**: Store "last_processed_id" to resume where you left off
+- **Use cases**:
+  - Store "last_leaderboard_positions" to detect when users climb or drop ranks
+  - Track "processed_mission_ids" to avoid duplicate notifications
+  - Save "streak_reminder_sent" to prevent multiple reminders per day
 
 #### Approval Queues
 
@@ -160,8 +207,8 @@ These powerful features work through configuration, not custom code:
 │                                                                     │
 │  ┌─────────────┐         emit_event          ┌─────────────┐       │
 │  │    APP A    │────────────────────────────▶│  Event Bus  │       │
-│  │ "Order      │     "order_processed"       │             │       │
-│  │  Processor" │                             └──────┬──────┘       │
+│  │ "Mission    │   "milestone_reached"       │             │       │
+│  │  Tracker"   │                             └──────┬──────┘       │
 │  └─────────────┘                                    │              │
 │                                                     │ matches      │
 │                          ┌──────────────────────────┼──────────────┐
@@ -169,8 +216,8 @@ These powerful features work through configuration, not custom code:
 │                          ▼                          ▼              │
 │                   ┌─────────────┐           ┌─────────────┐       │
 │                   │    APP B    │           │    APP C    │       │
-│                   │ "Send Review│           │ "Update     │       │
-│                   │  Request"   │           │  Analytics" │       │
+│                   │ "NFT Badge  │           │ "Klaviyo    │       │
+│                   │  Minter"    │           │  Sync"      │       │
 │                   └─────────────┘           └─────────────┘       │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
@@ -179,26 +226,32 @@ These powerful features work through configuration, not custom code:
 - **Action**: `emit_event` with custom event name and payload
 - **Other apps**: Listen via event trigger with matching event name
 - **Scope**: Events are tenant-scoped (cannot cross tenants)
-- **Use case**: App A emits "order_processed" → App B listens for "order_processed"
+- **Use cases**:
+  - "Mission Tracker" emits "milestone_reached" → "NFT Badge Minter" mints celebratory badge
+  - "Shopify Order Handler" emits "vip_customer" → "Room Inviter" adds user to exclusive room
+  - "Campaign Ended" emits "winners_selected" → "Prize Distributor" awards rewards
 
 #### Pre-built Integrations
 
-| Integration | Actions Available |
-|-------------|-------------------|
-| Slack | send_message, send_dm |
-| Discord | send_message, send_embed |
-| Mailchimp | add_subscriber, update_tags |
-| Twilio | send_sms |
+| Integration | Actions Available | Decommerce Use Case |
+|-------------|-------------------|---------------------|
+| Klaviyo | sync_profile, add_to_list, trigger_flow, track_event | Sync community members, trigger email flows on mission completion |
+| Slack | send_message, send_dm | Alert team when VIP customers join, notify on campaign milestones |
+| Discord | send_message, send_embed | Post leaderboard updates, announce new missions |
+| Mailchimp | add_subscriber, update_tags | Segment users by engagement level, tag by badges earned |
+| Twilio | send_sms | Send streak expiring warnings, reward claim confirmations |
 
 #### UI Widgets
 
-| Widget Type | Description | Placement |
-|-------------|-------------|-----------|
-| stat_card | Single metric with label | Dashboard |
-| leaderboard | Top N users table | Dashboard |
-| chart_line | Time series chart | Dashboard |
-| chart_bar | Bar chart | Dashboard |
-| table | Data table with columns | Dashboard |
+| Widget Type | Description | Decommerce Example |
+|-------------|-------------|-------------------|
+| stat_card | Single metric with label | "Missions Completed Today: 47" |
+| leaderboard | Top N users table | "Top 10 XP Earners This Week" |
+| chart_line | Time series chart | "Daily Active Users (30 days)" |
+| chart_bar | Bar chart | "Missions by Type (Trivia, Hangman, Survey)" |
+| table | Data table with columns | "Recent Reward Claims" |
+| progress_ring | Circular progress indicator | "Campaign Progress: 73% Complete" |
+| activity_feed | Recent events stream | "Live Mission Completions" |
 
 #### File Processing
 
@@ -212,7 +265,10 @@ These powerful features work through configuration, not custom code:
 #### Compensating Actions
 - **Definition**: Add `on_failure` block to any action
 - **Behavior**: If the action fails, run the compensating action automatically
-- **Use case**: If `award_xp` fails, run `send_notification` to alert admin
+- **Use cases**:
+  - If `mint_nft_badge` fails → revert XP award and notify admin
+  - If `send_email` fails → create in-app notification as fallback
+  - If `create_mission` fails → log error and alert via Slack
 
 ### What Micro-Apps CANNOT Do (Hard Limits)
 
@@ -270,12 +326,15 @@ These are architectural boundaries that cannot be overcome through configuration
 
 Contact the development team only if you need:
 
-- **New integrations** not yet available (e.g., a new CRM or payment provider)
-- **Custom UI components** beyond the pre-built widget library
-- **Processing 100K+ records** in a single operation
-- **Custom database schemas** for specialized data storage
-- **A/B testing or experimentation** frameworks
-- **Real-time interactive features** (chat, live updates)
+- **New game mechanics** not in the catalog (e.g., slot machine, scratch cards, poker)
+- **New token/chain integrations** beyond supported chains (ETH, MATIC, BNB, Polygon)
+- **Custom NFT contract deployment** for unique badge mechanics or special minting rules
+- **Real-time interactive features** like live chat, collaborative games, or live streaming
+- **Processing 100K+ items** in a single operation (split into smaller batches if possible)
+- **Custom analytics dashboards** beyond the widget capabilities
+- **New Shopify webhook types** not yet mapped to platform events
+- **Custom reward calculation formulas** beyond standard XP/token awards
+- **Third-party integrations** not yet supported (e.g., specific CRM, payment provider)
 
 ---
 
@@ -590,54 +649,150 @@ When confirmation is enabled:
 
 ## Micro-App Catalog
 
-This is a reference catalog of example apps by category. Categories include:
+This is a reference catalog of example apps by category with specific Decommerce use cases:
 
 ### Email & Communication
-- Weekly engagement digest
-- Win-back campaigns
-- Welcome series
-- Shopify + community emails
-- Mission reminders
-- Reward available alerts
-- Top contributor spotlights
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Weekly XP Digest | Scheduled: Monday 8 AM | Sends email with XP earned, missions completed, rank change |
+| Streak Warning | Scheduled: Daily 6 PM | Alerts users whose streak expires in next 6 hours |
+| Reward Reminder | Scheduled: Weekly | Notifies users with unclaimed rewards (500+ XP available) |
+| Room Welcome | Event: room.member_joined | Sends personalized welcome message to new room members |
+| Campaign Kickoff | Event: campaign.started | Emails opted-in users about new campaign with first mission link |
+| Win-Back Email | Scheduled: Weekly | Targets users inactive 30+ days with special "comeback" mission |
 
 ### Content Automation
-- Weekly recap posts
-- Auto welcome posts
-- Product announcements
-- Event reminder posts
-- Milestone celebration posts
-- Monthly highlights
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Mission Announcer | Event: mission.created | Auto-posts mission announcement in relevant room |
+| Leaderboard Update | Scheduled: Friday 5 PM | Posts weekly leaderboard to #announcements room |
+| Milestone Celebration | Event: milestone.reached | Creates congratulations post when user hits XP milestone |
+| Campaign Recap | Event: campaign.ended | Posts campaign results with top performers and stats |
+| New Member Spotlight | Scheduled: Daily | Features users who joined in last 24 hours |
 
 ### Engagement & Gamification
-- Campaign builder
-- Weekly leaderboard rewards
-- Streak bonus system
-- Referral booster campaigns
-- Room activity challenges
-- New user onboarding missions
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Streak Bonus | Event: contribution.completed | Awards +50% XP if user has 7+ day streak |
+| Leaderboard Climber | Event: xp.awarded | Mints "Rising Star" badge when user enters top 10 |
+| NFT Badge Minter | Event: milestone.reached | Auto-mints NFT badge when XP threshold hit |
+| Room Activity Booster | Scheduled: Daily | Awards bonus XP for posting in rooms with <5 posts today |
+| Referral Tracker | Event: user.created | Awards XP to referrer when referred user completes first mission |
+| Hangman Helper | Scheduled: Daily | Sends hint to users stuck on hangman for 24+ hours |
 
 ### Analytics & Reporting
-- Weekly admin reports
-- Churn risk alerts
-- Content performance reports
-- Mission effectiveness reports
-- Shopify/community correlation
-- Room health dashboards
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Weekly Admin Digest | Scheduled: Monday 9 AM | Emails admin with engagement metrics, top performers |
+| Churn Risk Alert | Scheduled: Daily | Flags users inactive 14+ days; creates re-engagement list |
+| Mission Effectiveness | Scheduled: Weekly | Reports completion rates by mission type (trivia vs hangman) |
+| Shopify Correlation | Scheduled: Monthly | Analyzes purchase behavior vs community engagement |
+| Room Health Dashboard | Scheduled: Daily | Updates dashboard widgets with room activity metrics |
 
 ### Moderation & Management
-- Low-quality post detector
-- Inactive user cleanup
-- New user watchlist
-- Engagement score calculator
-- Auto-archive old rooms
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Content Moderator | Event: post.created | AI analyzes post quality; flags suspicious content |
+| Inactive Cleanup | Scheduled: Monthly | Identifies users with 0 activity in 90 days |
+| New User Watchlist | Event: user.created | Monitors first 7 days of activity; alerts if suspicious |
+| Engagement Calculator | Scheduled: Daily | Recalculates engagement scores based on recent activity |
+| Room Archiver | Scheduled: Monthly | Auto-archives rooms with <10 posts in 60 days |
 
 ### Shopify Integration
-- Purchase thank-you automations
-- VIP buyer rewards
-- Review requests after purchase
-- First purchase celebration
-- Abandoned cart recovery
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Purchase Thank You | Event: shopify.order.created | Awards XP (1 per $1 spent) + "Customer" badge |
+| VIP Buyer | Event: shopify.order.fulfilled | Mints "VIP" NFT badge at $500 lifetime purchases |
+| Review Request | Delayed: 7 days after order.fulfilled | Creates "Share Experience" mission with 300 XP reward |
+| First Purchase Celebration | Event: shopify.order.created | Awards "First Purchase" badge + room invite |
+| Restock Alert | Event: shopify.product.restocked | Notifies previous buyers of product availability |
+
+---
+
+## Real-World Decommerce Scenarios
+
+These end-to-end examples show how micro-apps work together to solve actual Decommerce use cases.
+
+### Scenario 1: New User Onboarding Journey
+
+**Goal**: Guide new users through their first week with progressively valuable touchpoints.
+
+**Apps Created**:
+
+1. **Welcome XP Bonus** (Event: user.created)
+   - Awards 100 XP instantly to new user
+   - Creates personalized welcome post in #introductions room
+   - Syncs user profile to Klaviyo with "new_member" tag
+
+2. **Day 1 Mission Nudge** (Delayed: 24h after user.created)
+   - Checks if user has completed any mission
+   - If not: sends push notification suggesting easiest mission (e.g., "Verify Email")
+   - If yes: sends congratulations with next mission recommendation
+
+3. **Day 3 Room Invite** (Delayed: 72h after user.created)
+   - Analyzes user's profile interests and completed missions
+   - AI generates personalized room recommendations
+   - Sends email with top 3 room suggestions and invite links
+
+4. **Week 1 Celebration** (Delayed: 7 days after user.created)
+   - Calculates user's first-week stats (XP earned, missions completed, posts)
+   - If engaged (5+ missions): awards "Active Newcomer" NFT badge
+   - If inactive (<2 missions): sends win-back email with exclusive bonus mission
+
+### Scenario 2: Shopify Purchase → Community Engagement
+
+**Goal**: Convert Shopify customers into active community members.
+
+**Apps Created**:
+
+1. **Purchase Thank You** (Event: shopify.order.created)
+   - Matches customer email to community user
+   - If member: awards "Customer" badge + 200 XP + thank you notification
+   - If not member: sends community invitation email with 500 XP signup bonus
+   - Tracks purchase in Klaviyo for segmentation
+
+2. **Product Fan Badge** (Event: shopify.order.fulfilled)
+   - Counts user's total fulfilled orders
+   - At 3 orders: mints "Loyal Customer" NFT badge
+   - At 10 orders: mints "VIP" NFT badge + grants access to exclusive room
+   - Posts achievement in #community-wins room
+
+3. **Review Request** (Delayed: 7 days after shopify.order.fulfilled)
+   - Creates personalized "Share Your Experience" mission for user
+   - Mission rewards 300 XP + entry into monthly prize drawing
+   - Links to product-specific discussion room
+   - If no response: follows up at day 14
+
+### Scenario 3: Weekly Engagement Boost Campaign
+
+**Goal**: Maintain consistent community activity with weekly challenges.
+
+**Apps Created**:
+
+1. **Monday Challenge Launcher** (Scheduled: Monday 9 AM)
+   - AI generates weekly theme based on trending topics and past performance
+   - Creates time-limited missions (Trivia, Hangman, Survey) expiring Sunday
+   - Posts announcement in #weekly-challenges room
+   - Sends push notification to users who participated in previous weeks
+
+2. **Mid-Week Reminder** (Scheduled: Wednesday 2 PM)
+   - Fetches users who haven't participated yet this week
+   - Calculates current participation rate
+   - Sends personalized push: "72 members completed this week's challenge - join them!"
+   - Posts progress update in #weekly-challenges room
+
+3. **Friday Leaderboard Update** (Scheduled: Friday 5 PM)
+   - Calculates current week's standings based on challenge XP
+   - Posts leaderboard to #weekly-challenges room
+   - Notifies top 10 users of their current position
+   - Sends "You're almost in top 10!" to users ranked 11-15
+
+4. **Sunday Winner Announcement** (Scheduled: Sunday 8 PM)
+   - Finalizes weekly rankings
+   - Awards bonus XP: 1st (500), 2nd (300), 3rd (200)
+   - Mints "Weekly Champion" badge to #1
+   - Posts celebration post with stats and next week preview
+   - Resets weekly challenge state for next week
 
 ---
 
@@ -708,21 +863,41 @@ Examples of settings:
 Configurations use template placeholders to reference values available at runtime.
 
 ### Syntax
-- Variables are referenced using a double-brace placeholder format.
+- Variables are referenced using a double-brace placeholder format: `{{variable.name}}`
 
-### Variable sources
-- Trigger payload values (e.g., identifiers from an event)
-- Data pipeline step outputs (each step id becomes a variable scope)
-- Loop variables introduced by for-each style actions
-- Outputs produced by earlier actions (e.g., AI text outputs)
-- Built-in values like current time and tenant id
+### Variable Sources
+
+| Source | Available Variables |
+|--------|---------------------|
+| **User data** | `user.id`, `user.email`, `user.name`, `user.xp_total`, `user.web3_account`, `user.engagement_score` |
+| **Mission data** | `mission.id`, `mission.name`, `mission.xp_reward`, `mission.action_type`, `mission.status` |
+| **Contribution data** | `contribution.id`, `contribution.type`, `contribution.days_in_a_row`, `contribution.completed` |
+| **Room data** | `room.id`, `room.name`, `room.member_count`, `room.type`, `room.is_exclusive` |
+| **Campaign data** | `campaign.id`, `campaign.name`, `campaign.start_date`, `campaign.end_date` |
+| **Shopify data** | `order.id`, `order.totalPriceAmount`, `order.currency`, `product.title`, `product.price` |
+| **NFT Badge data** | `badge.id`, `badge.name`, `badge.contract_type`, `badge.chain_id` |
+| **Event payload** | `event.user_id`, `event.mission_id`, `event.timestamp`, `event.type` |
+| **Built-ins** | `now`, `tenant_id`, `app_id`, `execution_id` |
+| **AI outputs** | `ai_result.text`, `ai_result.classification`, `ai_result.score` |
+| **Pipeline outputs** | `steps.step_id.data`, `steps.step_id.count` |
+
+### Example Interpolations
+
+| Template | Result |
+|----------|--------|
+| `Congrats {{user.name}}! You earned {{mission.xp_reward}} XP!` | "Congrats Alex! You earned 500 XP!" |
+| `Your {{contribution.days_in_a_row}}-day streak continues!` | "Your 7-day streak continues!" |
+| `Thanks for your {{order.totalPriceAmount}} {{order.currency}} order!` | "Thanks for your 49.99 USD order!" |
+| `Welcome to {{room.name}} ({{room.member_count}} members)` | "Welcome to Gaming Lounge (342 members)" |
+| `You've earned the {{badge.name}} badge!` | "You've earned the VIP Customer badge!" |
+| `Campaign {{campaign.name}} ends {{campaign.end_date \| date}}` | "Campaign Summer Challenge ends Jan 31" |
 
 ### Common features
-- Dot notation for nested fields.
-- Array indexing where needed.
-- Default/fallback values when a field is missing.
-- Basic formatting filters (uppercase/lowercase/date/number/truncate/join/json/default).
-- Clear scoping rules: global → pipeline → loop → action outputs.
+- Dot notation for nested fields: `{{user.profile.avatar_url}}`
+- Array indexing: `{{steps.users.data[0].name}}`
+- Default/fallback values: `{{user.nickname \| default:user.name}}`
+- Formatting filters: `uppercase`, `lowercase`, `date`, `number`, `truncate`, `join`, `json`
+- Clear scoping rules: global → pipeline → loop → action outputs
 
 ---
 
@@ -778,15 +953,21 @@ Connectors are read-only data access building blocks. Each connector defines:
 
 | Connector | Description | Key Filters |
 |-----------|-------------|-------------|
-| users | Platform users | status, role, created_at, engagement_score |
+| users | Platform users | status, role, created_at, engagement_score, web3_account |
 | posts | User-generated content | room_id, author_id, created_at, status |
-| rooms | Community spaces | status, type, member_count |
-| room_members | Room membership data | room_id, user_id, role |
-| missions | Available missions | status, type, room_id |
-| user_missions | User mission progress | user_id, mission_id, status |
-| contributions | User contributions | user_id, type, created_at |
-| rewards | Reward claims | user_id, reward_type, claimed_at |
-| shopify_orders | Shopify orders | customer_email, status, created_at |
+| rooms | Community spaces | status, type, member_count, is_exclusive |
+| room_members | Room membership data | room_id, user_id, role, is_admin |
+| missions | Available missions | status, type, room_id, action_type |
+| user_missions | User mission progress | user_id, mission_id, status, completed_at |
+| contributions | User contributions | user_id, type, created_at, days_in_a_row |
+| rewards | Reward claims | user_id, reward_type, claimed_at, token_type |
+| campaigns | Mission campaigns | status, type, start_date, end_date |
+| nft_badges | NFT badge definitions | contract_type, room_id, campaign_id, chain_id |
+| milestones | XP milestones | xp_threshold, reward_type |
+| total_rewards | User accumulated rewards | user_id, token_type, amount |
+| hangman_status | Hangman game progress | user_id, mission_id, completed, remain_count |
+| trivia_status | Trivia game progress | user_id, mission_id, score, completed |
+| shopify_orders | Shopify orders | customer_email, status, created_at, totalPriceAmount |
 | shopify_products | Shopify products | status, type, collection |
 | engagement_metrics | Aggregated metrics | user_id, period, metric_type |
 | notifications | Sent notifications | user_id, type, status |
@@ -826,12 +1007,18 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 |----------|---------|
 | **Communication** | send_email, send_notification, send_push |
 | **Content** | create_post, update_post, flag_post, delete_post, create_comment |
-| **Users** | update_user, award_xp, award_badge, update_engagement_score |
-| **Missions** | create_mission, complete_mission, assign_mission |
+| **Users** | update_user, award_xp, award_badge, update_engagement_score, connect_wallet |
+| **Missions** | create_mission, complete_mission, assign_mission, expire_mission |
+| **Contributions** | create_contribution, complete_contribution, award_contribution_xp |
+| **Campaigns** | start_campaign, end_campaign, select_winners |
+| **NFT/Web3** | mint_nft_badge, transfer_token, verify_wallet, check_token_balance |
+| **Gamification** | start_streak, extend_streak, reset_streak, award_milestone |
+| **Rooms** | add_to_room, remove_from_room, grant_room_access |
 | **State** | set_state, get_state, delete_state |
 | **Flow Control** | for_each, condition, request_approval, emit_event |
 | **AI** | ai_analyze, ai_generate, ai_classify |
 | **External** | webhook_call |
+| **Klaviyo** | klaviyo.sync_profile, klaviyo.add_to_list, klaviyo.trigger_flow, klaviyo.track_event |
 | **Integrations** | slack.send_message, discord.send_message, mailchimp.add_subscriber, twilio.send_sms |
 | **Files** | generate_pdf, resize_image |
 | **Compensate** | on_failure (wrapper for any action) |
@@ -859,11 +1046,16 @@ Webhook calls must be constrained with:
 
 | Category | Event Names |
 |----------|-------------|
-| **User Lifecycle** | user.created, user.updated, user.deleted, user.login |
+| **User Lifecycle** | user.created, user.updated, user.deleted, user.login, user.wallet_connected |
 | **Content** | post.created, post.updated, post.deleted, post.flagged, comment.created |
-| **Missions** | mission.created, mission.completed, mission.expired |
-| **Rewards** | reward.claimed, xp.awarded, badge.earned |
-| **Rooms** | room.created, room.member_joined, room.member_left |
+| **Missions** | mission.created, mission.completed, mission.expired, mission.assigned |
+| **Contributions** | contribution.created, contribution.completed, contribution.expired |
+| **Rewards** | reward.claimed, xp.awarded, badge.earned, milestone.reached |
+| **Campaigns** | campaign.started, campaign.ended, campaign.winner_selected |
+| **NFT Badges** | nft_badge.minted, nft_badge.claimed, nft_badge.transferred |
+| **Streaks** | streak.started, streak.extended, streak.broken |
+| **Games** | hangman.completed, trivia.completed, spin_wheel.completed, survey.completed |
+| **Rooms** | room.created, room.member_joined, room.member_left, room.access_requested |
 | **Shopify** | shopify.order.created, shopify.order.fulfilled, shopify.customer.created |
 | **Custom** | Any event emitted by another app via `emit_event` action |
 
@@ -1042,11 +1234,26 @@ When quotas are exceeded:
 | App not running | Status is "paused" or "error" | Check status in Apps UI; resume or fix errors |
 | Missing data in actions | Variable not in scope | Check pipeline step IDs match variable references |
 | Email not sent | Rate limit exceeded | Check quota in tenant settings; wait or upgrade |
-| Event trigger not firing | Event name mismatch | Verify exact event name spelling |
+| Event trigger not firing | Event name mismatch | Verify exact event name spelling (e.g., `mission.completed` not `missionCompleted`) |
 | Loop processing partial | Timeout reached | Reduce items per run or split into multiple apps |
 | AI action failing | Token limit exceeded | Reduce prompt size or batch items |
 | Webhook failing | Domain not allowlisted | Add domain to tenant webhook allowlist |
 | State not persisting | Key limit exceeded | Delete unused keys or upgrade tier |
+
+### Decommerce-Specific Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| NFT mint failing | Wallet not connected or insufficient gas | Verify user has `web3_account`; check chain gas prices |
+| Streak not updating | Contribution timestamp issue | Verify `contribution.created` fires before midnight UTC |
+| Mission not completing | Action requirements not met | Check `mission.action_type` matches user's actual activity |
+| Klaviyo sync failing | API key invalid or list not found | Verify Klaviyo settings in tenant configuration |
+| XP not awarded | Duplicate contribution check | Each contribution type can only award XP once per period |
+| Badge already minted | User already has badge | Check `nft_badges` connector for existing badge ownership |
+| Room access denied | User not a member | Use `add_to_room` action before sending room-specific content |
+| Campaign winner not selected | Campaign still active | Ensure `campaign.end_date` has passed before selecting winners |
+| Trivia/Hangman stuck | Game state corrupted | Check `trivia_status` or `hangman_status` connector for state |
+| Shopify order not matched | Email mismatch | Verify customer email in Shopify matches community user email |
 
 ### Debugging Steps
 
