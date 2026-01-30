@@ -9,6 +9,7 @@ This is a **plain-English** version of the technical specification in `MCP-integ
 1. Executive Summary
 2. Vision & Goals
 3. What Micro-Apps Can and Cannot Do *(Limitations & Boundaries)*
+   - Enhanced Capabilities Details
 4. Why MCP + Micro-Apps?
 5. System Architecture
 6. Part 1: MCP Server
@@ -27,7 +28,8 @@ This is a **plain-English** version of the technical specification in `MCP-integ
 19. Rate Limits & Quotas
 20. Implementation Phases
 21. Testing & Verification
-22. Key Reference Files
+22. Troubleshooting *(NEW)*
+23. Key Reference Files
 
 ---
 
@@ -69,7 +71,8 @@ Admin asks AI → AI designs the app configuration → app becomes active and ru
 ### Non-Goals (Out of Scope)
 
 - AI writing real application code (new React components, new backend modules).
-- Apps requiring new database tables or new UI pages/components.
+- Apps requiring new database tables or custom-coded UI components.
+  - *Note: Pre-built configurable widgets (dashboard cards, charts) ARE supported - see Enhanced Capabilities.*
 - Major platform features unrelated to automation (payments, DM, video chat, etc.).
 
 ---
@@ -112,6 +115,104 @@ These powerful features work through configuration, not custom code:
 | **Compensating Actions** | Define "undo" action if later steps fail | If reward fails, don't send the notification |
 | **Pre-built Integrations** | Platform provides connectors for popular services | Send to Slack channel via `slack.send_message` action |
 | **Template-based Files** | Generate documents from templates | PDF receipt from order data |
+
+### How Enhanced Capabilities Work
+
+#### State Storage
+- **Actions**: `set_state` (save value), `get_state` (retrieve value), `delete_state` (remove key)
+- **Scope**: Per-app key-value store (isolated per app)
+- **Limits**: 100 keys per app, 10KB max per value
+- **Use case**: Store "last_processed_id" to resume where you left off
+
+#### Approval Queues
+
+<pre>
+┌─────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   App   │───▶│  Execution  │───▶│   request_   │───▶│   PAUSED    │
+│ Trigger │    │   starts    │    │   approval   │    │  (waiting)  │
+└─────────┘    └─────────────┘    └──────────────┘    └──────┬──────┘
+                                                              │
+                                         ┌────────────────────┼────────────────────┐
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │   APPROVE   │      │   REJECT    │      │   TIMEOUT   │
+                                  │ (continue)  │      │  (cancel)   │      │ (7 days)    │
+                                  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │  Continue   │      │   Execution │      │   Execution │
+                                  │  execution  │      │   cancelled │      │   cancelled │
+                                  └─────────────┘      └─────────────┘      └─────────────┘
+</pre>
+
+- **Action**: `request_approval` pauses execution
+- **Admin sees**: Pending approval in Apps UI with action preview
+- **Options**: Approve (continue), Reject (cancel), Modify (edit pending action)
+- **Timeout**: 7 days, then auto-cancel
+
+#### App Chaining (Event Emission)
+
+<pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                         TENANT SCOPE                                 │
+│                                                                     │
+│  ┌─────────────┐         emit_event          ┌─────────────┐       │
+│  │    APP A    │────────────────────────────▶│  Event Bus  │       │
+│  │ "Order      │     "order_processed"       │             │       │
+│  │  Processor" │                             └──────┬──────┘       │
+│  └─────────────┘                                    │              │
+│                                                     │ matches      │
+│                          ┌──────────────────────────┼──────────────┐
+│                          │                          │              │
+│                          ▼                          ▼              │
+│                   ┌─────────────┐           ┌─────────────┐       │
+│                   │    APP B    │           │    APP C    │       │
+│                   │ "Send Review│           │ "Update     │       │
+│                   │  Request"   │           │  Analytics" │       │
+│                   └─────────────┘           └─────────────┘       │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+
+- **Action**: `emit_event` with custom event name and payload
+- **Other apps**: Listen via event trigger with matching event name
+- **Scope**: Events are tenant-scoped (cannot cross tenants)
+- **Use case**: App A emits "order_processed" → App B listens for "order_processed"
+
+#### Pre-built Integrations
+
+| Integration | Actions Available |
+|-------------|-------------------|
+| Slack | send_message, send_dm |
+| Discord | send_message, send_embed |
+| Mailchimp | add_subscriber, update_tags |
+| Twilio | send_sms |
+
+#### UI Widgets
+
+| Widget Type | Description | Placement |
+|-------------|-------------|-----------|
+| stat_card | Single metric with label | Dashboard |
+| leaderboard | Top N users table | Dashboard |
+| chart_line | Time series chart | Dashboard |
+| chart_bar | Bar chart | Dashboard |
+| table | Data table with columns | Dashboard |
+
+#### File Processing
+
+| Action | Description |
+|--------|-------------|
+| generate_pdf | Create PDF from template + data |
+| resize_image | Resize image to specified dimensions |
+
+**Templates**: Platform provides built-in templates; custom templates can be uploaded via admin panel.
+
+#### Compensating Actions
+- **Definition**: Add `on_failure` block to any action
+- **Behavior**: If the action fails, run the compensating action automatically
+- **Use case**: If `award_xp` fails, run `send_notification` to alert admin
 
 ### What Micro-Apps CANNOT Do (Hard Limits)
 
@@ -372,6 +473,38 @@ Apps are assembled from three building block types:
 | Actions | Produce side effects | send email, create post, award XP, flag content |
 | Triggers | Decide when to run | cron schedule, platform event, manual run |
 
+#### Building Blocks Relationship
+
+<pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                         MICRO-APP                                    │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                        TRIGGER                               │   │
+│  │    (scheduled | event | manual | delayed)                    │   │
+│  │                                                              │   │
+│  │    "WHEN should this app run?"                               │   │
+│  └──────────────────────────┬──────────────────────────────────┘   │
+│                              │ fires                                │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                      CONNECTORS                              │   │
+│  │    (users | posts | orders | metrics | ...)                  │   │
+│  │                                                              │   │
+│  │    "WHAT data does this app need?"                           │   │
+│  └──────────────────────────┬──────────────────────────────────┘   │
+│                              │ provides data                        │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                       ACTIONS                                │   │
+│  │    (send_email | create_post | award_xp | ai_generate | ...) │   │
+│  │                                                              │   │
+│  │    "WHAT should this app do with the data?"                  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+
 ### Why configuration-based apps
 
 Generating configurations instead of arbitrary code is safer because:
@@ -397,6 +530,35 @@ Generating configurations instead of arbitrary code is safer because:
   - start/end timestamps
   - items processed
   - result payload and/or error message
+
+### App Lifecycle States
+
+<pre>
+                    ┌─────────────────────────────────────────┐
+                    │                                         │
+                    ▼                                         │
+┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐     │
+│  DRAFT  │───▶│ ACTIVE  │───▶│ PAUSED  │───▶│ ACTIVE  │     │
+└─────────┘    └────┬────┘    └────┬────┘    └─────────┘     │
+     │              │              │                          │
+     │              ▼              │                          │
+     │         ┌─────────┐        │                          │
+     │         │  ERROR  │◀───────┘                          │
+     │         └────┬────┘                                   │
+     │              │                                         │
+     │              ▼                                         │
+     │         ┌─────────┐                                   │
+     └────────▶│ DELETED │◀──────────────────────────────────┘
+               └─────────┘
+
+State Transitions:
+- DRAFT → ACTIVE: Admin enables app
+- ACTIVE → PAUSED: Admin pauses or auto-pause on errors
+- ACTIVE → ERROR: Consecutive failures exceed threshold
+- PAUSED → ACTIVE: Admin resumes
+- ERROR → ACTIVE: Admin fixes and resumes
+- Any → DELETED: Admin deletes app
+</pre>
 
 ---
 
@@ -506,6 +668,27 @@ An ordered list of steps. Each step has:
 - optional limits
 - optional post-fetch transformations (see Logic Transformations)
 
+#### Data Pipeline Visualization
+
+<pre>
+┌──────────────────────────────────────────────────────────────────────┐
+│                        DATA PIPELINE                                  │
+│                                                                      │
+│  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐   │
+│  │ Connector │───▶│ Transform │───▶│ Transform │───▶│  Output   │   │
+│  │  (fetch)  │    │ (filter)  │    │  (sort)   │    │  (data)   │   │
+│  └───────────┘    └───────────┘    └───────────┘    └─────┬─────┘   │
+│       │                                                    │         │
+│       │ Example:                                           │         │
+│       │ users connector                                    │         │
+│       │ → filter: status = "active"                        ▼         │
+│       │ → sort: engagement_score DESC              ┌───────────┐    │
+│       │ → limit: 10                                │  ACTIONS  │    │
+│       │                                            │ (execute) │    │
+│       └────────────────────────────────────────────┴───────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
+</pre>
+
 ### 4) Actions
 An ordered list of actions. Each action has:
 - an action type
@@ -563,11 +746,17 @@ Ensures:
 - loop actions include required loop fields and nested actions
 
 ### 3) Limit validation
-Enforces platform constraints such as:
-- max pipeline steps
-- max actions (including nested actions)
-- max loop nesting depth
-- max apps per tenant
+
+Enforces platform constraints:
+
+| Limit | Value |
+|-------|-------|
+| Max pipeline steps | 10 |
+| Max actions per app | 20 |
+| Max nested actions (in loops) | 50 |
+| Max loop nesting depth | 2 |
+| Max apps per tenant | Per tier (10-unlimited) |
+| Max items per loop | 5,000 |
 
 ### Validation feedback
 If invalid, return:
@@ -585,20 +774,27 @@ Connectors are read-only data access building blocks. Each connector defines:
 - allowed field selection
 - limits/offsets
 
-Example connector families:
-- users
-- engagement metrics
-- posts
-- rooms and room members
-- missions and user missions
-- contributions and reward claims
-- Shopify orders and products
-- analytics metrics
-- notifications
+### Available Connectors
 
-Each connector should also:
-- validate filters
-- provide field metadata for documentation and AI guidance
+| Connector | Description | Key Filters |
+|-----------|-------------|-------------|
+| users | Platform users | status, role, created_at, engagement_score |
+| posts | User-generated content | room_id, author_id, created_at, status |
+| rooms | Community spaces | status, type, member_count |
+| room_members | Room membership data | room_id, user_id, role |
+| missions | Available missions | status, type, room_id |
+| user_missions | User mission progress | user_id, mission_id, status |
+| contributions | User contributions | user_id, type, created_at |
+| rewards | Reward claims | user_id, reward_type, claimed_at |
+| shopify_orders | Shopify orders | customer_email, status, created_at |
+| shopify_products | Shopify products | status, type, collection |
+| engagement_metrics | Aggregated metrics | user_id, period, metric_type |
+| notifications | Sent notifications | user_id, type, status |
+| app_state | Current app's state storage | key |
+
+Each connector also:
+- validates filters against allowed operators
+- provides field metadata for documentation and AI guidance
 
 ---
 
@@ -624,18 +820,21 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 - execution logic
 - structured result output (for downstream steps or logs)
 
-### Common action types
-- send email
-- create post
-- send notification
-- update user
-- create mission
-- award XP
-- flag content
-- webhook call to external URL
-- for-each loop (iterate over items and execute nested actions)
-- AI analyze
-- AI generate
+### Available Actions
+
+| Category | Actions |
+|----------|---------|
+| **Communication** | send_email, send_notification, send_push |
+| **Content** | create_post, update_post, flag_post, delete_post, create_comment |
+| **Users** | update_user, award_xp, award_badge, update_engagement_score |
+| **Missions** | create_mission, complete_mission, assign_mission |
+| **State** | set_state, get_state, delete_state |
+| **Flow Control** | for_each, condition, request_approval, emit_event |
+| **AI** | ai_analyze, ai_generate, ai_classify |
+| **External** | webhook_call |
+| **Integrations** | slack.send_message, discord.send_message, mailchimp.add_subscriber, twilio.send_sms |
+| **Files** | generate_pdf, resize_image |
+| **Compensate** | on_failure (wrapper for any action) |
 
 ### Webhook security requirements
 Webhook calls must be constrained with:
@@ -656,19 +855,53 @@ Webhook calls must be constrained with:
 - **manual**: admin requests run.
 - **delayed**: on an event, schedule one or more future executions at specified delays, with optional conditions per delay.
 
-### Available events (conceptual examples)
-Examples include user lifecycle events, content events, mission/reward events, room membership events, and Shopify order events.
+### Available Events
 
-### Trigger filtering
-Event triggers can include filters to restrict which events qualify, including:
-- simple equality matches
-- comparison operators (greater/less than, etc.)
-- list membership
-- pattern matching for strings
-- logical combinations (AND/OR)
+| Category | Event Names |
+|----------|-------------|
+| **User Lifecycle** | user.created, user.updated, user.deleted, user.login |
+| **Content** | post.created, post.updated, post.deleted, post.flagged, comment.created |
+| **Missions** | mission.created, mission.completed, mission.expired |
+| **Rewards** | reward.claimed, xp.awarded, badge.earned |
+| **Rooms** | room.created, room.member_joined, room.member_left |
+| **Shopify** | shopify.order.created, shopify.order.fulfilled, shopify.customer.created |
+| **Custom** | Any event emitted by another app via `emit_event` action |
 
-### Shopify integration
-Shopify webhooks are mapped into normalized platform events that can trigger apps. Customer identity matching can be done using a stable key such as email.
+### Trigger Filtering
+
+Event triggers can include filters to restrict which events qualify.
+
+#### Filter Operators
+
+| Operator | Description | Example |
+|----------|-------------|---------|
+| eq | Equals | status eq "active" |
+| ne | Not equals | role ne "admin" |
+| gt, gte | Greater than (or equal) | age gt 18 |
+| lt, lte | Less than (or equal) | score lte 100 |
+| in | In list | status in ["active", "pending"] |
+| nin | Not in list | type nin ["spam", "deleted"] |
+| contains | String contains | name contains "john" |
+| starts_with | String starts with | email starts_with "admin" |
+| ends_with | String ends with | email ends_with "@company.com" |
+| regex | Regex match | username regex "^user_[0-9]+$" |
+| exists | Field exists | profile_picture exists true |
+| and, or | Logical combinations | (status eq "active") and (role eq "user") |
+
+### Shopify Integration
+
+Shopify webhooks are mapped into normalized platform events that can trigger apps.
+
+#### Customer Matching
+
+When a Shopify event arrives:
+1. Platform looks up community user by **email** (primary key)
+2. If found: Event includes `user_id` for targeting
+3. If NOT found: Event includes `shopify_customer_email` only
+4. App can choose to:
+   - Skip non-community customers (add filter: `user_id exists true`)
+   - Create community user (action: `create_user_from_shopify`)
+   - Send email anyway (use `shopify_customer_email` as recipient)
 
 ---
 
@@ -721,12 +954,17 @@ System-wide limits control:
 - app execution duration and concurrency pressure
 - AI tokens/calls and streaming capacity
 
-### Per-tenant limits
-Tenant-specific quotas ensure fair usage, including:
-- AI calls per hour/day and tokens per day
-- app executions per hour
-- emails per day
-- chat messages per hour
+### Per-Tenant Rate Limits by Tier
+
+| Resource | Free | Starter | Pro | Enterprise |
+|----------|------|---------|-----|------------|
+| Apps | 10 | 25 | 100 | Unlimited |
+| Executions/hour | 50 | 200 | 1,000 | 5,000 |
+| AI calls/day | 100 | 500 | 2,000 | 10,000 |
+| Emails/day | 100 | 1,000 | 10,000 | 100,000 |
+| Webhooks/hour | 50 | 200 | 1,000 | 5,000 |
+| State storage keys | 50 | 200 | 1,000 | 10,000 |
+| Chat messages/hour | 20 | 50 | 200 | 1,000 |
 
 ### Quota exceeded handling
 When quotas are exceeded:
@@ -792,6 +1030,44 @@ When quotas are exceeded:
 - pause an app and verify it stops running
 - inspect execution logs
 - delete an app and verify it disappears and stops executing
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| App not running | Status is "paused" or "error" | Check status in Apps UI; resume or fix errors |
+| Missing data in actions | Variable not in scope | Check pipeline step IDs match variable references |
+| Email not sent | Rate limit exceeded | Check quota in tenant settings; wait or upgrade |
+| Event trigger not firing | Event name mismatch | Verify exact event name spelling |
+| Loop processing partial | Timeout reached | Reduce items per run or split into multiple apps |
+| AI action failing | Token limit exceeded | Reduce prompt size or batch items |
+| Webhook failing | Domain not allowlisted | Add domain to tenant webhook allowlist |
+| State not persisting | Key limit exceeded | Delete unused keys or upgrade tier |
+
+### Debugging Steps
+
+1. **Check Execution Logs**: Apps UI → App Details → Execution History
+2. **Review Error Messages**: Logs show exact failure point and error
+3. **Validate Configuration**: Use "Test Run" to validate without side effects
+4. **Check Rate Limits**: Tenant Settings → Usage shows current quota usage
+5. **Inspect Variables**: Execution logs show variable values at each step
+6. **Test with Fewer Items**: Reduce loop items to isolate issues
+
+### Error Codes
+
+| Code | Meaning | Resolution |
+|------|---------|------------|
+| E001 | Invalid configuration | Fix schema errors shown in validation |
+| E002 | Rate limit exceeded | Wait or upgrade tier |
+| E003 | Execution timeout | Break into smaller apps |
+| E004 | Connector error | Check filter syntax and data availability |
+| E005 | Action failed | Review action parameters and permissions |
+| E006 | Variable not found | Ensure variable is defined in scope |
+| E007 | External service error | Check webhook URL and service status |
 
 ---
 
