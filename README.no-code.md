@@ -1,30 +1,65 @@
-# Decommerce MCP + AI Micro-Apps — Technical Specification (No-Code Version)
+# Decommerce MCP + AI Micro-Apps — Plain-English Specification (No-Code)
 
-This is a **plain-English** version of the technical specification in `MCP-integration-technical.md`. It explains the **same system and requirements**, but **without any code snippets**.
+This document is the plain-English companion to `MCP-integration-technical.md`. It describes the **same system and requirements**, but without code snippets. The goal is alignment: **what we’re building, what it can do, and where the hard edges are**.
+
+**Audience**: product, engineering, ops, and anyone reviewing the micro-app/MCP direction.  
+**Not included**: implementation details, exact endpoints/DTOs, or database schema diffs (those live in the technical doc and codebase).
+
+---
+
+## How to read this doc
+
+- If you want the “why” and high-level shape, read **Executive Summary → Vision & Goals → System Architecture**.
+- If you want to sanity-check safety and constraints, read **What Micro-Apps Can and Cannot Do → Execution Safeguards → Rate Limits & Quotas**.
+- If you want to understand the building blocks an app config can use, read **App Configuration Schema → Connectors → Actions → Triggers**.
+
+---
+
+## Glossary (quick definitions)
+
+- **Micro-app**: A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not “custom code”.
+- **MCP server**: The protocol layer exposing safe, tenant-scoped tools/resources that an AI agent can call.
+- **App Framework**: The runtime that stores, validates, schedules, executes, and logs micro-apps.
+- **Connector**: A read-only data fetch step (e.g., users, missions, shopify orders).
+- **Action**: A side-effect or control-flow step (e.g., award XP, create post, request approval).
+- **Trigger**: What causes execution (scheduled, event-driven, manual, delayed).
+- **Tenant-scoped**: Every tool call / app execution runs inside a single tenant boundary; no cross-tenant access.
+
+---
+
+## Assumptions & open questions (read this before debating numbers)
+
+This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless the codebase already enforces them, treat them as **target defaults** until we wire enforcement into configuration validation + runtime safeguards.
+
+- **Numeric limits (target defaults)**: execution timeout (5 minutes), loop cap (5,000), “apps per tenant” (100), AI calls per execution (500), emails per execution (2,000).
+- **Tier quotas (directional)**: the tier table is a placeholder unless your billing/plan system already defines these exact numbers.
+- **Open questions**:
+  - Do we want a single global execution timeout, or per-action/per-connector timeouts too?
+  - Where do we enforce email/webhook quotas: at MCP tool-level, execution runtime, or both?
+  - Which parts of “UI widgets” are v1 vs later (cards/leaderboards/charts)?
 
 ---
 
 ## Table of Contents
 
 1. Executive Summary
-2. How Micro-Apps Help Decommerce *(Business Value)*
+2. How Micro-Apps Help Decommerce *(business value)*
 3. Vision & Goals
-4. What Micro-Apps Can and Cannot Do *(Limitations & Boundaries)*
-   - Enhanced Capabilities Details
+4. What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*
 5. Why MCP + Micro-Apps?
 6. System Architecture
 7. Part 1: MCP Server
 8. Part 2: App Framework
 9. Part 3: Admin Panel AI Chatbox
 10. Micro-App Catalog
-11. Real-World Decommerce Scenarios *(End-to-End Examples)*
-12. App Configuration Schema (Described)
-13. Variable Interpolation (Described)
-14. App Configuration Validation (Described)
-15. Data Connectors (Described)
-16. Logic Transformations (Described)
-17. Action Executors (Described)
-18. Triggers System (Described)
+11. Real-World Decommerce Scenarios *(end-to-end examples)*
+12. App Configuration Schema
+13. Variable Interpolation
+14. App Configuration Validation
+15. Data Connectors
+16. Logic Transformations
+17. Action Executors
+18. Triggers System
 19. Execution Safeguards
 20. Error Recovery & Retry
 21. Rate Limits & Quotas
@@ -286,41 +321,35 @@ These are architectural boundaries that cannot be overcome through configuration
 | **Run complex nested logic** | No nested if-else chains beyond 2 levels or recursive functions |
 | **Custom calculations** | Limited to built-in aggregations (sum, avg, count, min, max) |
 
-### Volume & Performance Boundaries
+### Operational limits (target defaults)
 
-| Boundary | Limit | Impact |
-|----------|-------|--------|
-| **Items per loop** | 5,000 | For larger datasets, split across multiple scheduled runs |
-| **Execution timeout** | 5 minutes | Long-running tasks should be broken into smaller apps |
-| **AI calls per execution** | 500 | Use batch AI processing for high-volume personalization |
-| **Emails per execution** | 2,000 | High-volume campaigns can use multiple scheduled runs |
-| **Apps per tenant** | 100 | Organize apps by category; archive unused apps |
+These are the “how big/how often” limits we use to keep the runtime predictable. If the runtime/validation layer doesn’t already enforce a value, treat it as a **target default** to implement (not a promise we’re already meeting).
 
-### Scheduling Boundaries
+| Area | Limit | Target default | Why it exists | Where enforced |
+|------|-------|----------------|---------------|----------------|
+| **Looping** | Items per loop | 5,000 | Prevent long-running mass operations from starving workers | Validation + runtime stop conditions |
+| **Runtime** | Execution timeout per run | 5 minutes | Keep executions bounded; avoid “stuck” apps | Runtime watchdog/timeout |
+| **AI** | AI calls per execution | 500 | Control cost/latency and provider pressure | Runtime counters + provider limits |
+| **Email** | Emails per execution | 2,000 | Prevent accidental spam blasts; protect deliverability | Action executor + quota gates |
+| **Tenant capacity** | Apps per tenant | 100 | Keep the system operable; encourage archiving | Validation + plan/tier limits |
+| **Scheduling** | Minimum interval | 1 minute | Avoid “near-real-time” expectations; protect scheduler | Scheduler validation |
+| **Scheduling** | Single timezone per scheduled app | 1 timezone | Simpler mental model; fewer edge cases | Trigger config validation |
+| **Scheduling** | Business-day logic (skip weekends/holidays) | Not supported | Avoid hidden complexity in v1 | Product limitation (explicit) |
 
-| Boundary | Impact |
-|----------|--------|
-| **Minimum interval** | Cannot run more frequently than once per minute |
-| **Single timezone** | Each scheduled app uses one timezone; cannot auto-adjust per user |
-| **No business-day logic** | Cannot automatically skip weekends/holidays |
+### Data access & security boundaries
 
-### Data Access Boundaries
+This is the “what you can touch” boundary. We keep it explicit because it’s the main safety guarantee for tenant trust.
 
-| Boundary | Impact |
-|----------|--------|
-| **Read via connectors only** | Cannot run arbitrary database queries |
-| **Write via actions only** | Cannot directly UPDATE/DELETE records outside defined actions |
-| **Tenant isolation** | Cannot access data from other tenants |
-| **Current data only** | Cannot query historical snapshots ("users as of last month") |
-
-### Security Boundaries
-
-| Boundary | Reason |
-|----------|--------|
-| **No stored secrets** | Cannot save API keys for external services |
-| **Webhook allowlist** | Can only call pre-approved external URLs |
-| **No code execution** | Cannot run JavaScript, Python, or SQL snippets |
-| **No internal network access** | Cannot call localhost, private IPs, or cloud metadata |
+| Boundary | What it means in practice | Where enforced |
+|----------|----------------------------|----------------|
+| **Read via connectors only** | No raw SQL / arbitrary queries; only approved datasets with allowed filters | Connector layer |
+| **Write via actions only** | All side effects go through typed actions (auditable, validateable) | Action executor |
+| **Tenant isolation** | App can only access the current tenant’s data and events | Request context + data layer |
+| **Current data only** | No historical “as-of” snapshots unless platform already stores them | Connector layer |
+| **No stored secrets** | Micro-app configs don’t store API keys; integrations use tenant-managed settings | Settings/integration layer |
+| **Webhook allowlist** | Webhooks can only target approved domains | Webhook executor |
+| **No code execution** | No JS/Python/SQL snippets inside configs | Config validation |
+| **No internal network access** | Block localhost, private IPs, metadata endpoints, redirects to them | Webhook executor |
 
 ### When to Request a Core Platform Feature
 
@@ -470,9 +499,13 @@ The catalog includes 35+ examples across:
 
 ## Part 1: MCP Server
 
-The MCP Server exposes **tool endpoints** and **resources** that AI can use to interact with Decommerce safely.
+At this point we’re out of “what” and into “how the pieces work together”. The rest of the doc breaks the system into three parts that match how we’ll ship it: the MCP surface (tools/resources), the runtime (store + execute), and the admin UI (chat + control plane).
 
-### MCP module responsibilities (conceptual)
+## Part 1: MCP Server
+
+The MCP Server exposes **tool endpoints** and **resources** an AI agent can use to interact with Decommerce safely (and predictably). The MCP layer is where we enforce tenant context, auth, and coarse-grained read/write policy before anything touches business data.
+
+### MCP module responsibilities (responsibilities, not implementation detail)
 
 - Accept MCP requests via HTTP transport.
 - Authenticate requests (e.g., API key or tenant-scoped secret).
@@ -513,7 +546,7 @@ These are tenant-scoped tools for listing/fetching core entities and metrics, fo
 
 ## Part 2: App Framework
 
-The App Framework is the runtime engine that stores, schedules, executes, and monitors micro-apps.
+The App Framework is the runtime engine that stores, validates, schedules, executes, and monitors micro-apps. If MCP is the “hands” an agent can use, the framework is the “operating system” that makes those hands safe at scale.
 
 ### What the App Framework does
 
@@ -623,13 +656,13 @@ State Transitions:
 
 ## Part 3: Admin Panel AI Chatbox
 
-The admin panel provides:
+The admin panel is the control plane for humans. It provides:
 - a chat interface to request apps in natural language,
 - streaming responses,
 - optional confirmation gates for tool execution,
 - and an apps management UI (list/detail/logs/controls).
 
-### Endpoints (conceptual)
+### Endpoints (shape)
 
 The backend provides endpoints to:
 - send a chat message and stream AI responses,
@@ -796,7 +829,7 @@ These end-to-end examples show how micro-apps work together to solve actual Deco
 
 ---
 
-## App Configuration Schema (Described)
+## App Configuration Schema
 
 An app configuration contains:
 
@@ -858,7 +891,7 @@ Examples of settings:
 
 ---
 
-## Variable Interpolation (Described)
+## Variable Interpolation
 
 Configurations use template placeholders to reference values available at runtime.
 
@@ -901,7 +934,7 @@ Configurations use template placeholders to reference values available at runtim
 
 ---
 
-## App Configuration Validation (Described)
+## App Configuration Validation
 
 Before saving an AI-generated configuration, validation must pass:
 
@@ -941,7 +974,7 @@ If invalid, return:
 
 ---
 
-## Data Connectors (Described)
+## Data Connectors
 
 Connectors are read-only data access building blocks. Each connector defines:
 - what entity/metric it reads from
@@ -979,7 +1012,7 @@ Each connector also:
 
 ---
 
-## Logic Transformations (Described)
+## Logic Transformations
 
 Between data fetching and action execution, pipeline steps can apply transformations like:
 - filter (keep items matching criteria)
@@ -994,7 +1027,7 @@ The goal is to let AI compose robust pipelines without needing custom code.
 
 ---
 
-## Action Executors (Described)
+## Action Executors
 
 Actions are side-effect operations or control-flow blocks. Each action type has:
 - parameter validation
@@ -1034,7 +1067,7 @@ Webhook calls must be constrained with:
 
 ---
 
-## Triggers System (Described)
+## Triggers System
 
 ### Trigger types
 - **scheduled**: cron-based scheduler triggers execution.
@@ -1104,17 +1137,14 @@ When a Shopify event arrives:
 - If locked, a new run is skipped to prevent overlapping execution.
 - Locks must expire to avoid stale lock deadlocks.
 
-### Maximum limits (conceptual)
-Enforce limits such as:
-- max apps per tenant
-- max pipeline steps per app
-- max actions per app (including nested)
-- max items per loop
-- max nested loop depth
-- max execution duration
-- max AI calls per execution
-- max emails per execution
-- auto-pause after repeated failures
+### Limits enforcement (how the system stays stable)
+
+The specific limits live earlier in the doc under **Operational limits (target defaults)**. This section is about the mechanics that make those limits real at runtime:
+
+- **Validation gates**: reject configs that exceed structural limits (pipeline steps, actions, nesting).
+- **Runtime stop conditions**: stop loops/executions when item caps or timeouts are hit and log a clear reason.
+- **Counters & quotas**: track AI calls/emails/webhooks during an execution and stop before exceeding caps.
+- **Auto-pause on repeated failures**: after \(N\) consecutive failures, pause the app and notify admins (value for \(N\) should be configurable within platform bounds).
 
 ### Runtime safeguards
 - loop execution should track progress and stop when timeouts are reached
@@ -1147,6 +1177,9 @@ System-wide limits control:
 - AI tokens/calls and streaming capacity
 
 ### Per-Tenant Rate Limits by Tier
+
+This table is about **plan-level quotas** (how much a tenant can do over time). It’s separate from the **per-execution operational limits** earlier in the doc.
+If your billing/plan system doesn’t already enforce these exact numbers, treat them as **placeholder targets**.
 
 | Resource | Free | Starter | Pro | Enterprise |
 |----------|------|---------|-----|------------|
