@@ -89,34 +89,55 @@ This section sets clear expectations about the capabilities and boundaries of th
 | **Use AI** | Generate personalized text, analyze content quality, make decisions |
 | **Run on schedules** | Daily, weekly, monthly, custom cron expressions |
 | **React to events** | User signup, post created, order placed, mission completed |
-| **Loop over items** | Process up to 1,000 users/posts/orders per execution |
+| **Loop over items** | Process up to 5,000 users/posts/orders per execution |
 | **Apply conditions** | Only act when specific criteria are met |
+| **Display UI widgets** | Dashboard cards, stat widgets, charts, tables in designated areas |
+| **Trigger other apps** | App A emits event → App B listens and runs |
+| **Store app state** | Key-value storage for tracking data between executions |
+| **Use pre-built integrations** | Slack, Discord, Mailchimp via platform connectors |
+| **Process files (basic)** | Generate PDF from template, resize images via pre-built actions |
+| **Request human approval** | Pause execution, await admin approval, then continue |
 | **Call external URLs** | Webhooks to pre-approved domains |
 
-### What Micro-Apps CANNOT Do
+### Enhanced Capabilities (Configuration-Based)
 
-| Limitation | Reason | Alternative |
-|------------|--------|-------------|
-| **Create custom UI** | Cannot add new pages, buttons, modals, or visual components | Request as core platform feature |
-| **Create database tables** | Cannot add new tables or columns to store custom data | Request as core platform feature |
-| **Connect to external services** | Cannot integrate with Slack, Discord, Stripe, Mailchimp directly (beyond webhooks) | Request as core platform feature |
-| **Process files** | Cannot upload, download, or manipulate images, PDFs, videos | Request as core platform feature |
-| **Run complex logic** | No nested if-else chains, custom functions, or programming constructs | Keep apps simple; split into multiple apps |
-| **Perform custom calculations** | Limited to built-in aggregations (sum, avg, count, min, max) | Request as core platform feature |
-| **Operate in real-time** | Apps are triggered (batch), not live/interactive | Use platform's real-time features |
-| **Wait for human approval** | Cannot pause mid-execution for user input | Use confirmation before app creation instead |
-| **Trigger other apps** | App A cannot start App B | Create combined app or use events |
-| **Rollback on failure** | If action 3 fails, actions 1-2 are NOT undone | Design actions to be safe if incomplete |
+These powerful features work through configuration, not custom code:
+
+| Feature | How It Works | Example |
+|---------|--------------|---------|
+| **UI Widgets** | Select from pre-built widget types, configure data source | Show "Top 10 Users" leaderboard card on dashboard |
+| **App Chaining** | Define events apps can emit; other apps listen | "Order Shipped" app triggers "Send Review Request" app |
+| **State Storage** | Key-value store per app for persistence | Track "last_processed_date" between runs |
+| **Approval Queues** | Action pauses at approval step until admin approves | Email blast waits for admin OK before sending |
+| **Compensating Actions** | Define "undo" action if later steps fail | If reward fails, don't send the notification |
+| **Pre-built Integrations** | Platform provides connectors for popular services | Send to Slack channel via `slack.send_message` action |
+| **Template-based Files** | Generate documents from templates | PDF receipt from order data |
+
+### What Micro-Apps CANNOT Do (Hard Limits)
+
+These are architectural boundaries that cannot be overcome through configuration:
+
+| Limitation | Reason |
+|------------|--------|
+| **Write custom code** | Cannot run JavaScript, Python, SQL, or any executable code |
+| **Create new database tables** | Cannot define custom schemas or add columns |
+| **Build custom UI components** | Cannot create new React/Vue components from scratch |
+| **Access external APIs directly** | Must use pre-built platform connectors; no raw HTTP calls |
+| **Run indefinitely** | 5-minute maximum execution timeout per run |
+| **Bypass tenant isolation** | Cannot access data from other tenants |
+| **Operate in real-time** | Apps are triggered (batch), not live/interactive |
+| **Run complex nested logic** | No nested if-else chains beyond 2 levels or recursive functions |
+| **Custom calculations** | Limited to built-in aggregations (sum, avg, count, min, max) |
 
 ### Volume & Performance Boundaries
 
-| Boundary | Typical Limit | Impact |
-|----------|---------------|--------|
-| **Items per loop** | 1,000 | Cannot email 50,000 users in one run; split across multiple runs |
-| **Execution timeout** | 5 minutes | Cannot process very large datasets in one execution |
-| **AI calls per execution** | 100 | Cannot generate unique content for thousands of users at once |
-| **Emails per execution** | 500 | High-volume campaigns need multiple scheduled runs |
-| **Apps per tenant** | 50 | Focus on essential automations |
+| Boundary | Limit | Impact |
+|----------|-------|--------|
+| **Items per loop** | 5,000 | For larger datasets, split across multiple scheduled runs |
+| **Execution timeout** | 5 minutes | Long-running tasks should be broken into smaller apps |
+| **AI calls per execution** | 500 | Use batch AI processing for high-volume personalization |
+| **Emails per execution** | 2,000 | High-volume campaigns can use multiple scheduled runs |
+| **Apps per tenant** | 100 | Organize apps by category; archive unused apps |
 
 ### Scheduling Boundaries
 
@@ -144,17 +165,16 @@ This section sets clear expectations about the capabilities and boundaries of th
 | **No code execution** | Cannot run JavaScript, Python, or SQL snippets |
 | **No internal network access** | Cannot call localhost, private IPs, or cloud metadata |
 
-### When to Request a Core Feature Instead
+### When to Request a Core Platform Feature
 
-If you need any of the following, contact the development team to build it as a platform feature:
+Contact the development team only if you need:
 
-- Custom integrations (Slack notifications, Stripe payments, social login)
-- New UI components (custom dashboards, widgets, forms)
-- Processing large volumes (100K+ records)
-- Complex business rules (multi-step approvals, workflow engines)
-- File handling (image resizing, PDF generation, imports/exports)
-- A/B testing or experimentation
-- Custom analytics or reporting dashboards
+- **New integrations** not yet available (e.g., a new CRM or payment provider)
+- **Custom UI components** beyond the pre-built widget library
+- **Processing 100K+ records** in a single operation
+- **Custom database schemas** for specialized data storage
+- **A/B testing or experimentation** frameworks
+- **Real-time interactive features** (chat, live updates)
 
 ---
 
