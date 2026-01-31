@@ -23,6 +23,18 @@
 19. [Implementation Phases](#implementation-phases)
 20. [Testing & Verification](#testing--verification)
 21. [Key Reference Files](#key-reference-files)
+22. [Detailed Implementation Plan](#detailed-implementation-plan)
+    - [Phase 1: Foundation (Days 1-5)](#phase-1-foundation-days-1-5)
+    - [Phase 2: Connectors & Actions (Days 6-12)](#phase-2-connectors--actions-days-6-12)
+    - [Phase 3: Triggers System (Days 13-18)](#phase-3-triggers-system-days-13-18)
+    - [Phase 4: Admin Panel (Days 19-24)](#phase-4-admin-panel-days-19-24)
+    - [Phase 5: Testing & Security (Days 25-30)](#phase-5-testing--security-days-25-30)
+    - [Database Migrations](#database-migrations)
+    - [Critical Codebase Files for Reference](#critical-codebase-files-for-reference)
+    - [Module Dependencies](#module-dependencies)
+    - [Verification Plan](#verification-plan)
+23. [Critical Security Issues](#critical-security-issues-must-fix-before-v1)
+24. [Must-Fix Priority Summary](#must-fix-priority-summary)
 
 ---
 
@@ -1009,9 +1021,6 @@ interface Message {
 
 ### Full Schema
 
-<details>
-<summary>View <code>AppConfig</code> schema (TypeScript)</summary>
-
 ```typescript
 interface AppConfig {
   // App metadata
@@ -1132,8 +1141,6 @@ type ConditionOperator =
   | 'matches'          // RegExp(value).test(field)
   | 'between';         // value[0] <= field <= value[1]
 ```
-
-</details>
 
 ### Example: Low-Quality Post Detector
 
@@ -1453,9 +1460,6 @@ AI generates config → Schema Validation → Semantic Validation → Limit Chec
 
 Validates that the configuration matches the expected TypeScript interface:
 
-<details>
-<summary>View schema validator (<code>AppConfigValidator</code>)</summary>
-
 ```typescript
 class AppConfigValidator {
   validateSchema(config: unknown): ValidationResult {
@@ -1490,14 +1494,9 @@ class AppConfigValidator {
 }
 ```
 
-</details>
-
 ### Semantic Validation
 
 Validates that the configuration makes logical sense:
-
-<details>
-<summary>View semantic validator (<code>SemanticValidator</code>)</summary>
 
 ```typescript
 class SemanticValidator {
@@ -1549,14 +1548,9 @@ class SemanticValidator {
 }
 ```
 
-</details>
-
 ### Limit Validation
 
 Ensures the app is within resource limits:
-
-<details>
-<summary>View limit validator (<code>LimitValidator</code>)</summary>
 
 ```typescript
 class LimitValidator {
@@ -1591,14 +1585,9 @@ class LimitValidator {
 }
 ```
 
-</details>
-
 ### Validation Response
 
 When validation fails, AI receives detailed error messages:
-
-<details>
-<summary>View <code>ValidationResult</code> format + example</summary>
 
 ```typescript
 interface ValidationResult {
@@ -1620,8 +1609,6 @@ interface ValidationResult {
   ]
 }
 ```
-
-</details>
 
 ---
 
@@ -1903,9 +1890,6 @@ interface SortConfig {
 
 ### Action Interface
 
-<details>
-<summary>View <code>ActionExecutor</code> interface</summary>
-
 ```typescript
 interface ActionExecutor {
   type: string;
@@ -1928,8 +1912,6 @@ interface ExecutionContext {
 }
 ```
 
-</details>
-
 ### Webhook Security
 
 The `webhook` action calls external URLs, which requires strict security controls to prevent SSRF (Server-Side Request Forgery) and other attacks.
@@ -1937,9 +1919,6 @@ The `webhook` action calls external URLs, which requires strict security control
 #### URL Allowlist
 
 Webhooks can only call pre-approved domains:
-
-<details>
-<summary>View webhook allowlist / blocklist config</summary>
 
 ```typescript
 interface WebhookConfig {
@@ -1961,8 +1940,6 @@ const BLOCKED_PATTERNS = [
   'metadata.google.internal',  // GCP metadata
 ];
 ```
-
-</details>
 
 #### Webhook Action Security
 
@@ -2026,9 +2003,6 @@ class WebhookAction implements ActionExecutor {
 
 All webhook calls are logged for audit:
 
-<details>
-<summary>View <code>WebhookLog</code> interface</summary>
-
 ```typescript
 interface WebhookLog {
   app_id: number;
@@ -2042,8 +2016,6 @@ interface WebhookLog {
   timestamp: Date;
 }
 ```
-
-</details>
 
 ---
 
@@ -2063,9 +2035,6 @@ interface WebhookLog {
 The `delayed` trigger is specifically designed for multi-step sequences like welcome email series. It fires at specified intervals after an event occurs.
 
 **Use case:** Send welcome emails on Day 1, Day 3, and Day 7 after signup.
-
-<details>
-<summary>View <code>DelayedTriggerConfig</code> schema</summary>
 
 ```typescript
 interface DelayedTriggerConfig {
@@ -2087,8 +2056,6 @@ type DelaySpec = string | {
 // "24h" = 24 hours after event
 // "30m" = 30 minutes after event
 ```
-
-</details>
 
 **Example: Welcome Email Series**
 
@@ -2248,9 +2215,6 @@ Event triggers can include filters to only fire for specific events. This preven
 
 #### Basic Filter Syntax
 
-<details>
-<summary>View event trigger filter schema</summary>
-
 ```typescript
 interface EventTriggerConfig {
   type: 'event';
@@ -2263,8 +2227,6 @@ interface TriggerFilterConfig {
   [field: string]: any | FilterOperator;
 }
 ```
-
-</details>
 
 #### Examples
 
@@ -2788,9 +2750,6 @@ class AppExecutorService {
 
 Failed executions can be automatically retried with exponential backoff:
 
-<details>
-<summary>View <code>RetryConfig</code></summary>
-
 ```typescript
 interface RetryConfig {
   enabled: boolean;
@@ -2804,14 +2763,9 @@ interface RetryConfig {
 // Attempt 1: 1s, Attempt 2: 2s, Attempt 3: 4s, ...
 ```
 
-</details>
-
 ### Partial Execution Handling
 
 When an execution fails mid-way through a for_each loop:
-
-<details>
-<summary>View <code>ExecutionCheckpoint</code></summary>
 
 ```typescript
 interface ExecutionCheckpoint {
@@ -2823,8 +2777,6 @@ interface ExecutionCheckpoint {
 }
 ```
 
-</details>
-
 **Resume behavior:**
 - If `can_resume: true`, retry continues from `last_processed_index + 1`
 - If `can_resume: false`, entire execution restarts (actions are not idempotent)
@@ -2832,9 +2784,6 @@ interface ExecutionCheckpoint {
 ### Idempotency Markers
 
 For actions that should not be repeated (like sending emails):
-
-<details>
-<summary>View <code>IdempotencyKey</code> + usage example</summary>
 
 ```typescript
 interface IdempotencyKey {
@@ -2857,8 +2806,6 @@ class SendEmailAction {
   }
 }
 ```
-
-</details>
 
 ---
 
@@ -3000,9 +2947,6 @@ class SendEmailAction {
 
 ### Global Rate Limits (Environment Variables)
 
-<details>
-<summary>View global rate limit env vars</summary>
-
 ```bash
 # MCP Server
 MCP_ENABLED=true
@@ -3021,14 +2965,9 @@ AI_MAX_TOKENS=2000
 AI_RATE_LIMIT_PER_MINUTE=60  # Global rate limit
 ```
 
-</details>
-
 ### Per-Tenant Rate Limits
 
 Each tenant has individual rate limits to ensure fair resource allocation:
-
-<details>
-<summary>View <code>TenantRateLimits</code> interface</summary>
 
 ```typescript
 interface TenantRateLimits {
@@ -3050,8 +2989,6 @@ interface TenantRateLimits {
   override_until?: Date;
 }
 ```
-
-</details>
 
 ### Rate Limit Tiers
 
@@ -3167,8 +3104,566 @@ This system enables **AI to create micro-apps on the fly** for Decommerce tenant
 
 ---
 
+## Detailed Implementation Plan
+
+This section provides the comprehensive technical implementation plan with specific file structures, database migrations, and verification criteria.
+
+### Implementation Phases Overview
+
+| Phase | Duration | Focus |
+|-------|----------|-------|
+| **Phase 1: Foundation** | Days 1-5 | MCP server, AI provider abstraction, app storage |
+| **Phase 2: Connectors & Actions** | Days 6-12 | Data connectors, action executors, interpolation |
+| **Phase 3: Triggers** | Days 13-18 | Scheduler, event listeners, manual triggers |
+| **Phase 4: Admin Panel** | Days 19-24 | Chat UI, apps management |
+| **Phase 5: Testing & Security** | Days 25-30 | Validation, rate limiting, security hardening |
+
+---
+
+### Phase 1: Foundation (Days 1-5)
+
+#### 1.1 MCP Module Structure
+
+```
+src/mcp/
+├── mcp.module.ts
+├── mcp.controller.ts
+├── mcp-server.service.ts           # Tool registry & execution
+├── mcp-context.service.ts          # Per-request tenant context
+├── auth/
+│   └── mcp-api-key.guard.ts        # Pattern: src/zapier/guards/api-token.guard.ts
+├── guards/
+│   └── mcp-rate-limit.guard.ts     # Pattern: src/zapier/guards/zapier-rate-limit.guard.ts
+├── tools/
+│   ├── tool.interface.ts
+│   ├── tool.registry.ts
+│   └── apps.tools.ts               # create_app, list_apps, update_app, etc.
+├── resources/
+│   ├── platform-schema.resource.ts
+│   └── app-templates.resource.ts
+└── dto/
+    └── mcp-request.dto.ts
+```
+
+#### 1.2 AI Provider Abstraction
+
+```
+src/ai-providers/
+├── ai-providers.module.ts
+├── ai-providers.service.ts         # Factory for provider selection
+├── interfaces/
+│   └── ai-provider.interface.ts    # Common interface
+├── adapters/
+│   ├── claude.adapter.ts           # Claude tool_use format
+│   ├── openai.adapter.ts           # OpenAI function calling
+│   └── gemini.adapter.ts           # Gemini format
+└── dto/
+    └── chat-request.dto.ts
+```
+
+#### 1.3 App Framework Module
+
+```
+src/app-framework/
+├── app-framework.module.ts
+├── entities/
+│   ├── app.entity.ts               # App configuration storage
+│   ├── app-execution.entity.ts     # Execution history
+│   ├── app-state.entity.ts         # Per-app key-value state
+│   └── app-approval.entity.ts      # Pending approvals
+├── services/
+│   ├── app.service.ts              # CRUD operations
+│   ├── app-executor.service.ts     # Runs app logic
+│   └── app-validator.service.ts    # Config validation
+└── dto/
+    ├── create-app.dto.ts
+    └── app-config.dto.ts
+```
+
+#### 1.4 AI Apps API
+
+```
+src/ai-apps/
+├── ai-apps.module.ts
+├── ai-apps.controller.ts           # SSE streaming chat endpoint
+├── ai-apps.service.ts              # Orchestrates AI + MCP
+├── entities/
+│   └── conversation.entity.ts
+└── services/
+    ├── conversation.service.ts
+    └── tool-confirmation.service.ts
+```
+
+#### Phase 1 Deliverables
+
+| Deliverable | Success Criteria |
+|-------------|------------------|
+| MCP Module | Module loads, registers tools |
+| API Key Guard | Validates `mcp_{uuid}` tokens |
+| App Entity | Migrations run successfully |
+| App Service | CRUD operations work |
+| AI Provider | Claude adapter works |
+| Chat Controller | SSE streaming works |
+| **E2E Test** | Create app via chat, see it in list |
+
+---
+
+### Phase 2: Connectors & Actions (Days 6-12)
+
+#### 2.1 Connector Framework
+
+```
+src/app-framework/connectors/
+├── connector.interface.ts
+├── connector.registry.ts
+├── users.connector.ts              # Wraps UsersService
+├── posts.connector.ts              # Wraps PostsService
+├── rooms.connector.ts              # Wraps RoomService
+├── missions.connector.ts           # Wraps MissionsService
+├── user-missions.connector.ts
+├── contributions.connector.ts      # Wraps ContributionService
+├── reward-claims.connector.ts
+├── shopify-orders.connector.ts     # Wraps ShopifyService
+├── analytics.connector.ts
+└── app-state.connector.ts
+```
+
+#### 2.2 Action Executors
+
+```
+src/app-framework/actions/
+├── action.interface.ts
+├── action.registry.ts
+├── communication/
+│   ├── send-email.action.ts        # Uses SendgridService
+│   ├── send-notification.action.ts
+│   └── send-push.action.ts
+├── content/
+│   ├── create-post.action.ts       # Uses PostsService
+│   └── flag-content.action.ts
+├── users/
+│   ├── award-xp.action.ts          # Uses ContributionService
+│   └── award-badge.action.ts
+├── flow-control/
+│   ├── for-each.action.ts
+│   ├── condition.action.ts
+│   └── emit-event.action.ts
+├── ai/
+│   ├── ai-analyze.action.ts
+│   └── ai-generate.action.ts
+├── state/
+│   ├── set-state.action.ts
+│   └── get-state.action.ts
+└── integrations/
+    ├── webhook.action.ts
+    └── klaviyo.action.ts           # Uses KlaviyoService
+```
+
+#### 2.3 Variable Interpolation
+
+```
+src/app-framework/interpolation/
+├── interpolation.service.ts
+└── filters/
+    ├── string.filters.ts           # uppercase, lowercase, truncate
+    ├── date.filters.ts             # date formatting
+    ├── number.filters.ts           # number formatting
+    └── array.filters.ts            # count, join, first, last
+```
+
+#### Phase 2 Deliverables
+
+| Deliverable | Success Criteria |
+|-------------|------------------|
+| Users Connector | Filters work correctly |
+| Missions Connector | Status filters work |
+| Send Email Action | Emails delivered via SendGrid |
+| Award XP Action | XP awarded correctly |
+| For Each Action | Loops execute |
+| Interpolation Service | Variables resolve |
+| App Executor | Pipeline + actions run |
+| **Integration Test** | Run "Weekly Digest" app manually |
+
+---
+
+### Phase 3: Triggers System (Days 13-18)
+
+#### 3.1 Scheduler Service
+
+```
+src/app-framework/services/app-scheduler.service.ts
+```
+
+Pattern: `src/klaviyo/klaviyo-queue.service.ts`
+
+- Load scheduled apps on startup
+- Create CronJob for each app
+- Handle app updates (reschedule)
+- Execution lock with Redis TTL
+
+#### 3.2 Event Listener Service
+
+```
+src/app-framework/events/
+├── app-events.ts                   # Event definitions
+├── app-event-listener.ts           # @OnEvent handlers
+└── event-mapper.service.ts         # Maps platform events
+```
+
+Pattern: `src/klaviyo/listeners/klaviyo.listener.ts`
+
+#### 3.3 Event Emission Points (Modify Existing)
+
+| Service | Event | File |
+|---------|-------|------|
+| UsersService | user.created | `src/users/users.service.ts` |
+| PostsService | post.created | `src/posts/posts.service.ts` |
+| MissionsService | mission.completed | `src/missions/services/missions.service.ts` |
+| ContributionService | reward.claimed | `src/reward/services/contribution.service.ts` |
+| ShopifyService | shopify.order.* | `src/shopify/shopify.service.ts` |
+
+#### Phase 3 Deliverables
+
+| Deliverable | Success Criteria |
+|-------------|------------------|
+| Scheduler Service | Cron jobs execute on time |
+| Event Listener | Events trigger apps |
+| Event Definitions | All events defined |
+| User Events | user.created emits |
+| Mission Events | mission.completed emits |
+| Manual Run Tool | run_app tool works |
+| **Integration Test** | Scheduled app fires at correct time |
+| **Integration Test** | Event trigger fires app |
+
+---
+
+### Phase 4: Admin Panel (Days 19-24)
+
+#### 4.1 Frontend Structure
+
+```
+admin-panel/src/
+├── pages/ai-apps/
+│   ├── index.tsx                   # Main AI Apps page
+│   ├── [appId].tsx                 # App detail page
+│   └── chat.tsx                    # Full-screen chat
+├── components/ai-apps/
+│   ├── AIChatbox.tsx               # Main chat interface
+│   ├── ChatMessage.tsx             # Individual message
+│   ├── ProviderSelector.tsx        # Claude/OpenAI/Gemini
+│   ├── AppConfirmation.tsx         # Tool confirmation modal
+│   ├── AppsList.tsx                # Grid of apps
+│   ├── AppCard.tsx                 # Single app card
+│   ├── AppDetails.tsx              # App detail view
+│   └── AppLogs.tsx                 # Execution logs
+├── hooks/ai-apps/
+│   ├── useAIChat.ts                # SSE streaming hook
+│   ├── useApps.ts                  # Apps CRUD hooks
+│   └── useAppLogs.ts               # Logs fetching
+└── services/
+    └── ai-apps.service.ts          # API client
+```
+
+#### Phase 4 Deliverables
+
+| Deliverable | Success Criteria |
+|-------------|------------------|
+| AI Chatbox | Chat UI renders |
+| SSE Hook | Streaming works |
+| Provider Selector | Can switch providers |
+| Tool Confirmation | Modal works |
+| Apps List | Apps display |
+| App Details | Config and logs show |
+| **E2E Test** | Create app via chat, see in list, run it |
+
+---
+
+### Phase 5: Testing & Security (Days 25-30)
+
+#### 5.1 Test Structure
+
+```
+tests/
+├── unit/
+│   ├── app-framework/
+│   │   ├── connectors/*.spec.ts
+│   │   ├── actions/*.spec.ts
+│   │   └── services/*.spec.ts
+│   ├── mcp/
+│   │   └── tools/*.spec.ts
+│   └── ai-providers/
+│       └── *.adapter.spec.ts
+└── integration/
+    ├── app-execution.spec.ts
+    ├── event-trigger.spec.ts
+    └── chat-flow.spec.ts
+```
+
+#### 5.2 Security Hardening
+
+| Security Item | Implementation |
+|---------------|----------------|
+| **AI Output Validation** | JSON Schema (ajv), sanitize strings, validate types |
+| **Webhook SSRF Protection** | Block private IPs, DNS rebinding check, domain allowlist |
+| **Idempotency** | Redis keys per execution + action index |
+| **Rate Limiting** | Redis counters per tenant per resource |
+| **Execution Locking** | Redis NX with TTL |
+| **Auto-Pause** | After 5 consecutive errors |
+| **Quota Enforcement** | Per-tier limits (executions/hour, emails/day, AI calls/day) |
+
+#### Phase 5 Deliverables
+
+| Deliverable | Success Criteria |
+|-------------|------------------|
+| Unit Tests | 90%+ coverage |
+| Integration Tests | Full flows pass |
+| Config Validator | Rejects invalid configs |
+| Webhook Security | Blocks internal URLs |
+| Idempotency Service | No duplicate actions |
+| Quota Service | Enforces limits |
+| Auto-Pause | Pauses after 5 errors |
+| **Security Review** | All OWASP checks pass |
+
+---
+
+### Database Migrations
+
+#### Migration 1: Core Tables
+
+```sql
+CREATE TYPE app_status AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'ERROR');
+CREATE TYPE execution_status AS ENUM ('RUNNING', 'SUCCESS', 'FAILED');
+
+CREATE TABLE community.apps (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    config JSONB NOT NULL,
+    version INTEGER DEFAULT 1,
+    previous_configs JSONB,
+    status app_status DEFAULT 'ACTIVE',
+    created_by INTEGER NOT NULL,
+    updated_by INTEGER,
+    last_run_at TIMESTAMP,
+    run_count INTEGER DEFAULT 0,
+    error_count INTEGER DEFAULT 0,
+    consecutive_errors INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX idx_apps_tenant_status ON community.apps(tenant_id, status);
+CREATE INDEX idx_apps_trigger_type ON community.apps((config->'trigger'->>'type'));
+
+CREATE TABLE community.app_executions (
+    id SERIAL PRIMARY KEY,
+    app_id INTEGER REFERENCES community.apps(id),
+    status execution_status NOT NULL,
+    started_at TIMESTAMP NOT NULL,
+    completed_at TIMESTAMP,
+    items_processed INTEGER,
+    result JSONB,
+    error_message TEXT,
+    duration_ms INTEGER,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE community.app_state (
+    id SERIAL PRIMARY KEY,
+    app_id INTEGER REFERENCES community.apps(id),
+    key VARCHAR(255) NOT NULL,
+    value JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(app_id, key)
+);
+
+CREATE TABLE community.ai_conversations (
+    id VARCHAR(36) PRIMARY KEY,
+    tenant_id VARCHAR(255) NOT NULL,
+    user_id INTEGER NOT NULL,
+    provider VARCHAR(50) DEFAULT 'claude',
+    messages JSONB DEFAULT '[]',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+---
+
+### Critical Codebase Files for Reference
+
+| Purpose | File Path |
+|---------|-----------|
+| **Queue/Retry Pattern** | `src/klaviyo/klaviyo-queue.service.ts` |
+| **Event Listener Pattern** | `src/klaviyo/listeners/klaviyo.listener.ts` |
+| **Event Definitions** | `src/klaviyo/events/klaviyo.events.ts` |
+| **API Token Auth** | `src/zapier/guards/api-token.guard.ts` |
+| **Rate Limiting** | `src/zapier/guards/zapier-rate-limit.guard.ts` |
+| **Multi-Tenancy** | `src/tenancy/tenancy.module.ts` |
+| **Entity Pattern** | `src/klaviyo/entities/klaviyo-event-queue.entity.ts` |
+
+---
+
+### Module Dependencies
+
+```
+AppModule
+├── McpModule
+│   ├── TenancyModule (existing)
+│   ├── RedisModule (existing)
+│   └── AppFrameworkModule
+├── AiProvidersModule
+│   └── ConfigModule (existing)
+├── AppFrameworkModule
+│   ├── MailModule (existing)
+│   ├── UsersModule (existing)
+│   ├── MissionsModule (existing)
+│   ├── RewardModule (existing)
+│   └── KlaviyoModule (existing)
+└── AiAppsModule
+    ├── AiProvidersModule
+    ├── McpModule
+    └── AppFrameworkModule
+```
+
+---
+
+### Verification Plan
+
+#### End-to-End Test Scenarios
+
+1. **Create App via Chat**
+   - Admin types "Create an app that awards XP when missions are completed"
+   - AI generates config → confirmation modal → app created
+   - App appears in apps list with ACTIVE status
+
+2. **Scheduled Execution**
+   - Create app with cron trigger "0 9 * * MON"
+   - Wait for Monday 9 AM (or mock)
+   - Verify execution log shows SUCCESS
+
+3. **Event Trigger**
+   - Create app triggered by mission.completed
+   - Complete a mission
+   - Verify app executed within 5 seconds
+
+4. **Connector + Action Pipeline**
+   - Create app: fetch users with XP > 1000 → send email
+   - Run manually
+   - Verify emails sent to correct users
+
+5. **Error Handling**
+   - Create app with invalid webhook URL
+   - Run app → should fail
+   - After 5 failures → should auto-pause
+
+---
+
+## Critical Security Issues (Must Fix Before v1)
+
+### 1. AI Output Validation Layer
+
+**Risk:** AI-generated configs executed without structural verification
+
+**Fix Required:**
+```typescript
+// src/mcp/validators/app-config.validator.ts
+@Injectable()
+export class AppConfigValidator {
+  validate(rawConfig: unknown): ValidatedAppConfig {
+    // 1. JSON Schema validation (ajv)
+    // 2. Sanitize all string fields
+    // 3. Validate connector/action types against registry
+    // 4. Check variable interpolation syntax (no code injection)
+    // 5. Enforce numeric limits with parseInt/parseFloat
+  }
+}
+```
+
+### 2. Tenant Context in Async Execution
+
+**Risk:** Cross-tenant data access if tenant context lost mid-execution
+
+**Fix Required:**
+```typescript
+// Every micro-app execution MUST carry tenant explicitly
+interface AppExecutionContext {
+  tenantDbName: string;      // From app.tenant_id lookup
+  appId: string;
+  executionId: string;
+  triggeredBy: 'cron' | 'event' | 'manual';
+}
+// Use getConnection(tenantDbName) NOT request-scoped CONNECTION
+```
+
+### 3. Idempotency Keys for Actions
+
+**Risk:** Duplicate XP awards, duplicate emails on retry
+
+**Fix Required:**
+```typescript
+abstract class BaseActionExecutor {
+  async execute(params, ctx: ExecutionContext): Promise<ActionResult> {
+    const idempotencyKey = `${ctx.executionId}:${ctx.actionIndex}`;
+    const existing = await this.redis.get(`idem:${idempotencyKey}`);
+    if (existing) return JSON.parse(existing);
+
+    const result = await this.doExecute(params, ctx);
+    await this.redis.setex(`idem:${idempotencyKey}`, 86400, JSON.stringify(result));
+    return result;
+  }
+}
+```
+
+### 4. Webhook SSRF Protection
+
+**Risk:** SSRF attacks via webhook_call action
+
+**Fix Required:**
+```typescript
+private readonly BLOCKED_RANGES = [
+  '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
+  '127.0.0.0/8', '169.254.0.0/16', '::1/128'
+];
+// Check resolved IP against BLOCKED_RANGES before request
+```
+
+### 5. AI Provider Keys Security
+
+**Risk:** Key exposure in multi-tenant context; billing fraud if BYOK
+
+**Fix Required:**
+- **Pooled keys:** Per-tenant usage metering + billing + rate limiting
+- **BYOK:** Keys encrypted with KMS; never sent to AI in prompts
+- Store `ai_api_key_encrypted` in tenant settings
+- Decrypt at runtime only
+
+---
+
+## Must-Fix Priority Summary
+
+| Priority | Issue | Effort |
+|----------|-------|--------|
+| 🔴 P0 | AI output validation layer | 2 days |
+| 🔴 P0 | Tenant context in async execution | 1 day |
+| 🔴 P0 | Idempotency keys | 1 day |
+| 🔴 P0 | Webhook SSRF protection | 1 day |
+| 🔴 P0 | AI key encryption + metering | 2 days |
+| 🟡 P1 | Event trigger throttling | 0.5 day |
+| 🟡 P1 | App version rollback | 0.5 day |
+| 🟡 P1 | Prompt injection sanitization | 0.5 day |
+| 🟡 P1 | Mandatory dry run | 1 day |
+| 🟡 P1 | Execution lock with TTL | 0.5 day |
+
+**Total Critical Path: ~10 engineering days before v1 launch**
+
+---
+
 **Document Version**: 2.0
 **Last Updated**: January 2025
 **Major Changes**:
-- v2.0: Complete rewrite for AI-generated micro-apps architecture
+- v2.0: Complete rewrite for AI-generated micro-apps architecture + Detailed Implementation Plan
 - v1.0: Initial MCP connector specification
