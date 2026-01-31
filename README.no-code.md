@@ -51,37 +51,42 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 1. [Executive Summary](#executive-summary)
 2. [How Micro-Apps Help Decommerce *(business value)*](#how-micro-apps-help-decommerce)
 3. [Vision & Goals](#vision--goals)
-4. [What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*](#what-micro-apps-can-and-cannot-do)
-5. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
-6. [System Architecture](#system-architecture)
-7. [Part 1: MCP Server](#part-1-mcp-server)
-8. [Part 2: App Framework](#part-2-app-framework)
-9. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
-10. [Micro-App Catalog](#micro-app-catalog)
-11. [Real-World Decommerce Scenarios *(end-to-end examples)*](#real-world-decommerce-scenarios)
-12. [App Configuration Schema](#app-configuration-schema)
-13. [Variable Interpolation](#variable-interpolation)
-14. [App Configuration Validation](#app-configuration-validation)
-15. [Data Connectors](#data-connectors)
-16. [Logic Transformations](#logic-transformations)
-17. [Action Executors](#action-executors)
-18. [Triggers System](#triggers-system)
-19. [Execution Safeguards](#execution-safeguards)
-20. [Error Recovery & Retry](#error-recovery--retry)
-21. [Rate Limits & Quotas](#rate-limits--quotas)
-22. [Implementation Phases](#implementation-phases)
-23. [Testing & Verification](#testing--verification)
-24. [Troubleshooting](#troubleshooting)
-25. [Key Reference Files](#key-reference-files)
-26. [Things we need to get right *(security & implementation notes)*](#things-we-need-to-get-right-security--implementation-notes)
+4. [The Big Picture: A Development Framework for AI](#the-big-picture-a-development-framework-for-ai)
+5. [What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*](#what-micro-apps-can-and-cannot-do)
+6. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
+7. [System Architecture](#system-architecture)
+8. [Part 1: MCP Server](#part-1-mcp-server)
+9. [Part 2: App Framework](#part-2-app-framework)
+10. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
+11. [Micro-App Catalog](#micro-app-catalog)
+12. [Real-World Decommerce Scenarios *(end-to-end examples)*](#real-world-decommerce-scenarios)
+13. [App Configuration Schema](#app-configuration-schema)
+14. [Variable Interpolation](#variable-interpolation)
+15. [App Configuration Validation](#app-configuration-validation)
+16. [Data Connectors](#data-connectors)
+17. [Logic Transformations](#logic-transformations)
+18. [Action Executors](#action-executors)
+19. [Triggers System](#triggers-system)
+20. [Execution Safeguards](#execution-safeguards)
+21. [Error Recovery & Retry](#error-recovery--retry)
+22. [Rate Limits & Quotas](#rate-limits--quotas)
+23. [Implementation Phases](#implementation-phases)
+24. [Testing & Verification](#testing--verification)
+25. [Troubleshooting](#troubleshooting)
+26. [Key Reference Files](#key-reference-files)
+27. [Things we need to get right *(security & implementation notes)*](#things-we-need-to-get-right-security--implementation-notes)
 
 ---
 
 ## Executive Summary
 
-This system is intended to let **tenant admins create micro-apps on the Decommerce platform** by describing what they want in plain English. Instead of building a bespoke integration for every workflow, we’ll standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
+Think of this like WordPress plugins or Shopify apps—but instead of human developers writing code, AI creates the apps from plain English descriptions.
 
-Why this matters for Decommerce: we already have strong primitives (users, rooms, posts, missions, rewards, Shopify, notifications). Micro-apps are the layer that turns those primitives into “one-click operations” and recurring automation without waiting on a new backend deployment for every idea.
+This system is intended to let **tenant admins create micro-apps on the Decommerce platform** by describing what they want in natural language. Instead of building a bespoke integration for every workflow, we'll standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
+
+Why this matters for Decommerce: we already have strong primitives (users, rooms, posts, missions, rewards, Shopify, notifications). Micro-apps are the layer that turns those primitives into "one-click operations" and recurring automation without waiting on a new backend deployment for every idea.
+
+**The bigger picture:** WordPress gave non-developers access to a plugin ecosystem (developers build, users install). Shopify gave merchants an app ecosystem (developers build, merchants install). Decommerce is building an AI-powered app ecosystem where admins describe what they need and AI builds it for them.
 
 **The system has three parts:**
 
@@ -164,6 +169,62 @@ Admin asks AI → AI produces an app configuration → Decommerce runs it safely
 - Apps requiring new database tables or custom-coded UI components.
   - *Note: Pre-built configurable widgets (dashboard cards, charts) ARE supported - see Enhanced Capabilities.*
 - Major platform features unrelated to automation (payments, DM, video chat, etc.).
+
+---
+
+## The Big Picture: A Development Framework for AI
+
+This isn't just an automation feature—it's a platform play. We're building a development framework where AI is the developer.
+
+### How it compares to existing ecosystems
+
+| Ecosystem | Who Develops | What They Create | How Users Get It |
+|-----------|--------------|------------------|------------------|
+| **WordPress Plugins** | Human developers | PHP code using hooks/filters | Users browse and install |
+| **Shopify Apps** | Human developers | API integrations + embedded UI | Merchants browse and install |
+| **Decommerce Micro-Apps** | AI | Configuration using connectors/actions/triggers | Admins describe and approve |
+
+### What makes this different
+
+**Traditional plugin/app ecosystems:**
+- Require developer skills or hiring developers
+- Apps are pre-built; you pick from what exists
+- Customization means finding a developer or learning to code
+- Time to new functionality: days to weeks
+
+**Decommerce AI-powered ecosystem:**
+- Admins describe what they want in plain English
+- Apps are generated on demand for your exact use case
+- Customization is just another conversation
+- Time to new functionality: minutes
+
+### The framework analogy
+
+If you've built WordPress plugins, you know the pattern: WordPress provides hooks (`add_action`, `add_filter`), database access (`$wpdb`), and UI elements (`add_menu_page`). Developers combine these to create functionality.
+
+Decommerce provides the same kind of building blocks:
+- **Connectors** = data access (like `$wpdb` queries)
+- **Actions** = side effects (like WordPress actions)
+- **Triggers** = when to run (like WordPress hooks)
+- **State storage** = persistence (like `wp_options`)
+
+The difference? Instead of a human writing PHP, an AI assembles JSON configuration. The framework validates it, stores it, and executes it safely.
+
+### Why configuration instead of code
+
+We could let AI write actual code—but that opens a can of worms:
+- Code can do anything, including things we didn't anticipate
+- Every generated script would need security review
+- Debugging AI-generated code is painful
+- Execution sandboxing gets complicated fast
+
+Configuration-based apps solve this:
+- AI can only use approved building blocks
+- Every app is inspectable (it's just JSON)
+- The runtime enforces limits consistently
+- Debugging is "which step failed?" not "what does this code do?"
+
+Think of it like Zapier vs. custom integrations. Zapier limits you to triggers and actions, but that constraint makes it safe and predictable. We're doing the same thing, but with AI doing the "zap building" instead of a human clicking through a UI.
 
 ---
 
