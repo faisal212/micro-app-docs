@@ -73,6 +73,7 @@ This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless 
 23. [Testing & Verification](#testing--verification)
 24. [Troubleshooting](#troubleshooting)
 25. [Key Reference Files](#key-reference-files)
+26. [Things we need to get right *(security & implementation notes)*](#things-we-need-to-get-right-security--implementation-notes)
 
 ---
 
@@ -1388,6 +1389,70 @@ These are the existing codebase patterns to follow (module, auth guard, multi-te
 
 - Backend (NestJS): module patterns, auth guard patterns, tenancy patterns, mail sending patterns, settings storage for tokens.
 - Admin panel (React): component and service patterns for pages, API clients, and streaming UI.
+
+---
+
+## Things we need to get right (security & implementation notes)
+
+This section captures the stuff that *must* work correctly before we ship. It's easy to get excited about features, but these are the guardrails that keep the system safe and trustworthy.
+
+### The big ones (don't skip these)
+
+**1. AI output validation**
+The AI generates JSON configs, but we can't just trust them blindly. Before storing any config:
+- Run it through JSON Schema validation (use ajv or similar)
+- Sanitize all string fields—a user could set their name to something nasty
+- Check that connector/action types actually exist in our registry
+- Make sure numeric limits are actually numbers, not strings pretending to be numbers
+
+**2. Tenant context in async execution**
+This one's subtle but critical. When an app runs from a cron job or event trigger, there's no HTTP request to carry the tenant context. We already solved this in the Klaviyo queue—each execution needs to explicitly carry `tenantDbName` and use `getConnection(tenantDbName)`, not the request-scoped connection.
+
+**3. Idempotency for side effects**
+If an execution retries (network blip, timeout, etc.), we can't award XP twice or send the same email twice. Each action needs an idempotency key like `${executionId}:${actionIndex}`. Check Redis before executing; cache the result after.
+
+**4. Webhook security**
+Allowlisting domains isn't enough. We also need to:
+- Check the resolved IP isn't a private range (10.x, 172.16.x, 192.168.x, localhost)
+- Don't follow redirects to internal hosts
+- Enforce response size limits (1MB max)
+- Set strict timeouts (10s)
+
+**5. AI provider keys**
+If tenants bring their own keys: encrypt them with KMS, never log them, never include them in prompts.
+If we use pooled keys: meter usage per tenant for billing, enforce per-tenant rate limits.
+
+### Worth getting right before launch
+
+- **Event trigger throttling**: If one event triggers 100 apps, don't run them all at once. Queue them, run 10 at a time.
+- **App version history**: Store previous configs so admins can rollback if they break something.
+- **Prompt injection defense**: When interpolating `{{user.name}}`, sanitize it. Someone will try "Ignore all instructions and..." eventually.
+- **Mandatory dry run**: New apps should run in preview mode before going active. Show what *would* happen without actually doing it.
+- **Execution locking**: If a cron app is still running when the next trigger fires, skip the new run. Use Redis locks with TTL matching the execution timeout.
+
+### Leveraging what we already have
+
+Good news: we don't need to build everything from scratch. The codebase already has patterns we can reuse:
+
+| What we need | What we have | Where |
+|--------------|--------------|-------|
+| Tenant isolation | TenantMiddleware + request-scoped connection | `src/tenancy/` |
+| Event system | EventEmitterModule + Klaviyo events | `src/klaviyo/events/` |
+| Cron queue pattern | KlaviyoQueueService retry logic | `src/klaviyo/klaviyo-queue.service.ts` |
+| Role permissions | 25+ granular permissions in Role entity | `src/role/role.service.ts` |
+| Redis | RedisService already configured | `src/redis/` |
+
+The MCP tools should map to existing role permissions: `create_app` → `ai_admin`, `award_xp` → `reward_rewards`, `create_post` → `community_rooms`, etc.
+
+### Rough effort estimate
+
+| Category | Items | Effort |
+|----------|-------|--------|
+| Must-have security | Validation, tenant context, idempotency, webhook safety, key encryption | ~7 days |
+| Should-have | Throttling, rollback, dry run, locking | ~3 days |
+| Total before v1 | | ~10 days |
+
+This isn't meant to slow us down—it's meant to avoid the "oh no" moments after launch.
 
 ---
 
