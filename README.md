@@ -2,28 +2,37 @@
 
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
-2. [Vision & Goals](#vision--goals)
-3. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
-4. [System Architecture](#system-architecture)
-5. [Part 1: MCP Server](#part-1-mcp-server)
-6. [Part 2: App Framework](#part-2-app-framework)
-7. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
-8. [Micro-App Catalog](#micro-app-catalog)
-9. [App Configuration Schema](#app-configuration-schema)
-10. [Variable Interpolation](#variable-interpolation)
-11. [App Configuration Validation](#app-configuration-validation)
-12. [Data Connectors](#data-connectors)
-13. [Logic Transformations](#logic-transformations)
-14. [Action Executors](#action-executors)
-15. [Triggers System](#triggers-system)
-16. [Execution Safeguards](#execution-safeguards)
-17. [Error Recovery & Retry](#error-recovery--retry)
-18. [Rate Limits & Quotas](#rate-limits--quotas)
-19. [Implementation Phases](#implementation-phases)
-20. [Testing & Verification](#testing--verification)
-21. [Key Reference Files](#key-reference-files)
-22. [Detailed Implementation Plan](#detailed-implementation-plan)
+1. [Glossary](#glossary)
+2. [Executive Summary](#executive-summary)
+3. [How Micro-Apps Help Decommerce](#how-micro-apps-help-decommerce)
+4. [Vision & Goals](#vision--goals)
+5. [The Big Picture: A Development Framework for AI](#the-big-picture-a-development-framework-for-ai)
+6. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
+7. [System Architecture](#system-architecture)
+8. [Part 1: MCP Server](#part-1-mcp-server)
+9. [Part 2: App Framework](#part-2-app-framework)
+10. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
+11. [Micro-App Catalog](#micro-app-catalog)
+12. [Real-World Decommerce Scenarios](#real-world-decommerce-scenarios)
+13. [App Configuration Schema](#app-configuration-schema)
+14. [Variable Interpolation](#variable-interpolation)
+15. [App Configuration Validation](#app-configuration-validation)
+16. [Data Connectors](#data-connectors)
+17. [Logic Transformations](#logic-transformations)
+18. [Action Executors](#action-executors)
+19. [UI Widgets](#ui-widgets)
+20. [Native OAuth Integrations](#native-oauth-integrations)
+21. [Triggers System](#triggers-system)
+22. [Approval Queues](#approval-queues)
+23. [App Chaining](#app-chaining)
+24. [Execution Safeguards](#execution-safeguards)
+25. [Error Recovery & Retry](#error-recovery--retry)
+26. [Rate Limits & Quotas](#rate-limits--quotas)
+27. [Implementation Phases](#implementation-phases)
+28. [Testing & Verification](#testing--verification)
+29. [Troubleshooting](#troubleshooting)
+30. [Key Reference Files](#key-reference-files)
+31. [Detailed Implementation Plan](#detailed-implementation-plan)
     - [Phase 1: Foundation (Days 1-5)](#phase-1-foundation-days-1-5)
     - [Phase 2: Connectors & Actions (Days 6-12)](#phase-2-connectors--actions-days-6-12)
     - [Phase 3: Triggers System (Days 13-18)](#phase-3-triggers-system-days-13-18)
@@ -33,8 +42,24 @@
     - [Critical Codebase Files for Reference](#critical-codebase-files-for-reference)
     - [Module Dependencies](#module-dependencies)
     - [Verification Plan](#verification-plan)
-23. [Critical Security Issues](#critical-security-issues-must-fix-before-v1)
-24. [Must-Fix Priority Summary](#must-fix-priority-summary)
+32. [Critical Security Issues](#critical-security-issues-must-fix-before-v1)
+33. [Must-Fix Priority Summary](#must-fix-priority-summary)
+
+---
+
+## Glossary
+
+| Term | Definition |
+|------|------------|
+| **Micro-app** | A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not "custom code". |
+| **MCP Server** | The protocol layer exposing safe, tenant-scoped tools/resources that an AI agent can call. |
+| **App Framework** | The runtime that stores, validates, schedules, executes, and logs micro-apps. |
+| **AI Provider** | The LLM service that interprets admin requests and generates app configs. Admins can choose between Claude, ChatGPT, Gemini, etc. |
+| **Provider Adapter** | Translates between our tool definitions and each AI's specific format (Claude's tool_use, OpenAI's function calling, etc.). |
+| **Connector** | A read-only data fetch step (e.g., users, missions, shopify orders). |
+| **Action** | A side-effect or control-flow step (e.g., award XP, create post, request approval). |
+| **Trigger** | What causes execution (scheduled, event-driven, manual, delayed). |
+| **Tenant-scoped** | Every tool call / app execution runs inside a single tenant boundary; no cross-tenant access. |
 
 ---
 
@@ -58,6 +83,48 @@ This document specifies a system that allows **AI to create micro-apps on the De
 
 ---
 
+## How Micro-Apps Help Decommerce
+
+This system directly addresses Decommerce's core business challenges:
+
+### Community Engagement Automation
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Users complete missions but don't return | Welcome series app sends personalized follow-ups at 1, 3, 7 days |
+| Low engagement in rooms | Room Activity Booster app awards bonus XP for posting in quiet rooms |
+| Users earn XP but never claim rewards | Reward Reminder app notifies users with unclaimed rewards |
+| Leaderboard stagnation | Weekly Challenge app creates time-limited missions with bonus multipliers |
+
+### Shopify-Community Bridge
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Shopify customers don't join community | Purchase Thank You app invites buyers to community with bonus XP |
+| No correlation between purchases and engagement | VIP Buyer Rewards app awards badges to high-value customers |
+| Abandoned carts | Cart Recovery app sends community-exclusive discount codes |
+| Post-purchase silence | Review Request app triggers 7 days after order fulfillment |
+
+### Gamification Optimization
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Users don't know about new missions | Mission Announcement app posts to relevant rooms when missions launch |
+| Streak breaks discourage users | Streak Saver app sends reminder before streak expires |
+| NFT badge distribution is manual | Badge Minter app automatically mints badges when milestones hit |
+| Campaign end is anticlimactic | Campaign Finale app announces winners and distributes prizes |
+
+### Admin Efficiency
+
+| Challenge | Micro-App Solution |
+|-----------|-------------------|
+| Manual weekly reports | Weekly Digest app emails engagement metrics every Monday |
+| Spam/low-quality posts | Content Moderator app uses AI to flag suspicious posts |
+| Inactive users clutter analytics | Churn Alert app identifies users inactive for 30+ days |
+| No visibility into mission performance | Mission Analytics app tracks completion rates by mission type |
+
+---
+
 ## Vision & Goals
 
 ### Vision
@@ -77,6 +144,62 @@ This document specifies a system that allows **AI to create micro-apps on the De
 - AI writing actual code (React components, NestJS modules)
 - Apps that require new database tables or UI components
 - Features like DM, video chat, payments — these need core development
+
+---
+
+## The Big Picture: A Development Framework for AI
+
+This isn't just an automation feature—it's a platform play. We're building a development framework where AI is the developer.
+
+### How It Compares to Existing Ecosystems
+
+| Ecosystem | Who Develops | What They Create | How Users Get It |
+|-----------|--------------|------------------|------------------|
+| **WordPress Plugins** | Human developers | PHP code using hooks/filters | Users browse and install |
+| **Shopify Apps** | Human developers | API integrations + embedded UI | Merchants browse and install |
+| **Decommerce Micro-Apps** | AI | Configuration using connectors/actions/triggers | Admins describe and approve |
+
+### What Makes This Different
+
+**Traditional plugin/app ecosystems:**
+- Require developer skills or hiring developers
+- Apps are pre-built; you pick from what exists
+- Customization means finding a developer or learning to code
+- Time to new functionality: days to weeks
+
+**Decommerce AI-powered ecosystem:**
+- Admins describe what they want in plain English
+- Apps are generated on demand for your exact use case
+- Customization is just another conversation
+- Time to new functionality: minutes
+
+### The Framework Analogy
+
+If you've built WordPress plugins, you know the pattern: WordPress provides hooks (`add_action`, `add_filter`), database access (`$wpdb`), and UI elements (`add_menu_page`). Developers combine these to create functionality.
+
+Decommerce provides the same kind of building blocks:
+- **Connectors** = data access (like `$wpdb` queries)
+- **Actions** = side effects (like WordPress actions)
+- **Triggers** = when to run (like WordPress hooks)
+- **State storage** = persistence (like `wp_options`)
+
+The difference? Instead of a human writing PHP, an AI assembles JSON configuration. The framework validates it, stores it, and executes it safely.
+
+### Why Configuration Instead of Code
+
+We could let AI write actual code—but that opens risks:
+- Code can do anything, including things we didn't anticipate
+- Every generated script would need security review
+- Debugging AI-generated code is painful
+- Execution sandboxing gets complicated fast
+
+Configuration-based apps solve this:
+- AI can only use approved building blocks
+- Every app is inspectable (it's just JSON)
+- The runtime enforces limits consistently
+- Debugging is "which step failed?" not "what does this code do?"
+
+Think of it like Zapier vs. custom integrations. Zapier limits you to triggers and actions, but that constraint makes it safe and predictable. We're doing the same thing, but with AI doing the "zap building" instead of a human clicking through a UI.
 
 ---
 
@@ -1017,6 +1140,93 @@ interface Message {
 
 ---
 
+## Real-World Decommerce Scenarios
+
+These end-to-end examples show how micro-apps work together to solve actual Decommerce use cases.
+
+### Scenario 1: New User Onboarding Journey
+
+**Goal**: Guide new users through their first week with progressively valuable touchpoints.
+
+**Apps Created**:
+
+1. **Welcome XP Bonus** (Event: user.created)
+   - Awards 100 XP instantly to new user
+   - Creates personalized welcome post in #introductions room
+   - Syncs user profile to Klaviyo with "new_member" tag
+
+2. **Day 1 Mission Nudge** (Delayed: 24h after user.created)
+   - Checks if user has completed any mission
+   - If not: sends push notification suggesting easiest mission (e.g., "Verify Email")
+   - If yes: sends congratulations with next mission recommendation
+
+3. **Day 3 Room Invite** (Delayed: 72h after user.created)
+   - Analyzes user's profile interests and completed missions
+   - AI generates personalized room recommendations
+   - Sends email with top 3 room suggestions and invite links
+
+4. **Week 1 Celebration** (Delayed: 7 days after user.created)
+   - Calculates user's first-week stats (XP earned, missions completed, posts)
+   - If engaged (5+ missions): awards "Active Newcomer" NFT badge
+   - If inactive (<2 missions): sends win-back email with exclusive bonus mission
+
+### Scenario 2: Shopify Purchase → Community Engagement
+
+**Goal**: Convert Shopify customers into active community members.
+
+**Apps Created**:
+
+1. **Purchase Thank You** (Event: shopify.order.created)
+   - Matches customer email to community user
+   - If member: awards "Customer" badge + 200 XP + thank you notification
+   - If not member: sends community invitation email with 500 XP signup bonus
+   - Tracks purchase in Klaviyo for segmentation
+
+2. **Product Fan Badge** (Event: shopify.order.fulfilled)
+   - Counts user's total fulfilled orders
+   - At 3 orders: mints "Loyal Customer" NFT badge
+   - At 10 orders: mints "VIP" NFT badge + grants access to exclusive room
+   - Posts achievement in #community-wins room
+
+3. **Review Request** (Delayed: 7 days after shopify.order.fulfilled)
+   - Creates personalized "Share Your Experience" mission for user
+   - Mission rewards 300 XP + entry into monthly prize drawing
+   - Links to product-specific discussion room
+   - If no response: follows up at day 14
+
+### Scenario 3: Weekly Engagement Boost Campaign
+
+**Goal**: Maintain consistent community activity with weekly challenges.
+
+**Apps Created**:
+
+1. **Monday Challenge Launcher** (Scheduled: Monday 9 AM)
+   - AI generates weekly theme based on trending topics and past performance
+   - Creates time-limited missions (Trivia, Hangman, Survey) expiring Sunday
+   - Posts announcement in #weekly-challenges room
+   - Sends push notification to users who participated in previous weeks
+
+2. **Mid-Week Reminder** (Scheduled: Wednesday 2 PM)
+   - Fetches users who haven't participated yet this week
+   - Calculates current participation rate
+   - Sends personalized push: "72 members completed this week's challenge - join them!"
+   - Posts progress update in #weekly-challenges room
+
+3. **Friday Leaderboard Update** (Scheduled: Friday 5 PM)
+   - Calculates current week's standings based on challenge XP
+   - Posts leaderboard to #weekly-challenges room
+   - Notifies top 10 users of their current position
+   - Sends "You're almost in top 10!" to users ranked 11-15
+
+4. **Sunday Winner Announcement** (Scheduled: Sunday 8 PM)
+   - Finalizes weekly rankings
+   - Awards bonus XP: 1st (500), 2nd (300), 3rd (200)
+   - Mints "Weekly Champion" badge to #1
+   - Posts celebration post with stats and next week preview
+   - Resets weekly challenge state for next week
+
+---
+
 ## App Configuration Schema
 
 ### Full Schema
@@ -1312,6 +1522,8 @@ Apps use **variable interpolation** to reference data from the data pipeline, tr
 
 ### Variable Sources
 
+#### By Source Type
+
 | Source | Syntax | Example |
 |--------|--------|---------|
 | **Data pipeline step** | `{{step_id.field}}` | `{{active_users.email}}` |
@@ -1319,7 +1531,94 @@ Apps use **variable interpolation** to reference data from the data pipeline, tr
 | **Loop variable** | `{{loop_var.field}}` | `{{user.first_name}}` (inside for_each) |
 | **Action output** | `{{output_var}}` | `{{email_body}}` (from ai_generate) |
 | **App metadata** | `{{app.field}}` | `{{app.name}}` |
-| **Current context** | `{{now}}`, `{{tenant_id}}` | Execution timestamp, current tenant |
+| **Current context** | `{{now}}`, `{{tenant_id}}`, `{{execution_id}}` | Execution timestamp, current tenant |
+
+#### Decommerce-Specific Variables
+
+| Category | Available Variables |
+|----------|---------------------|
+| **User data** | `user.id`, `user.email`, `user.name`, `user.xp_total`, `user.web3_account`, `user.engagement_score` |
+| **Mission data** | `mission.id`, `mission.name`, `mission.xp_reward`, `mission.action_type`, `mission.status` |
+| **Contribution data** | `contribution.id`, `contribution.type`, `contribution.days_in_a_row`, `contribution.completed` |
+| **Room data** | `room.id`, `room.name`, `room.member_count`, `room.type`, `room.is_exclusive` |
+| **Campaign data** | `campaign.id`, `campaign.name`, `campaign.start_date`, `campaign.end_date` |
+| **Shopify data** | `order.id`, `order.totalPriceAmount`, `order.currency`, `product.title`, `product.price` |
+| **NFT Badge data** | `badge.id`, `badge.name`, `badge.contract_type`, `badge.chain_id` |
+| **Event payload** | `event.user_id`, `event.mission_id`, `event.timestamp`, `event.type` |
+| **Built-ins** | `now`, `tenant_id`, `app_id`, `execution_id` |
+| **AI outputs** | `ai_result.text`, `ai_result.classification`, `ai_result.score` |
+| **Pipeline outputs** | `steps.step_id.data`, `steps.step_id.count` |
+
+#### Decommerce-Specific Examples
+
+| Template | Result |
+|----------|--------|
+| `Congrats {{user.name}}! You earned {{mission.xp_reward}} XP!` | "Congrats Alex! You earned 500 XP!" |
+| `Your {{contribution.days_in_a_row}}-day streak continues!` | "Your 7-day streak continues!" |
+| `Thanks for your {{order.totalPriceAmount}} {{order.currency}} order!` | "Thanks for your 49.99 USD order!" |
+| `Welcome to {{room.name}} ({{room.member_count}} members)` | "Welcome to Gaming Lounge (342 members)" |
+| `You've earned the {{badge.name}} badge!` | "You've earned the VIP Customer badge!" |
+
+### Variable Scoping Rules
+
+Variables are resolved in order of priority (inner scope shadows outer):
+
+```
+┌─────────────────────────────────────────────────────┐
+│ 1. GLOBAL (lowest priority)                         │
+│    - trigger.*, app.*, now, tenant_id, execution_id │
+│  ┌─────────────────────────────────────────────────┐│
+│  │ 2. PIPELINE                                     ││
+│  │    - Each data step adds: step_id.*             ││
+│  │  ┌─────────────────────────────────────────────┐││
+│  │  │ 3. LOOP (shadows outer if same name)        │││
+│  │  │    - for_each adds: as_variable.*           │││
+│  │  │  ┌─────────────────────────────────────────┐│││
+│  │  │  │ 4. ACTION OUTPUT (highest priority)     ││││
+│  │  │  │    - output_var from previous actions   ││││
+│  │  │  └─────────────────────────────────────────┘│││
+│  │  └─────────────────────────────────────────────┘││
+│  └─────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────┘
+```
+
+**Example of Scoping:**
+
+```json
+{
+  "data_pipeline": [
+    { "id": "user", "connector": "users", "filter": { "id": "{{trigger.user_id}}" } }
+  ],
+  "actions": [
+    {
+      "type": "for_each",
+      "params": {
+        "items": "{{user.friends}}",
+        "as": "friend",
+        "do": [
+          {
+            "type": "ai_generate",
+            "params": { "prompt": "Write greeting for {{friend.name}}", "output_var": "greeting" }
+          },
+          {
+            "type": "send_notification",
+            "params": {
+              "to": ["{{friend.id}}"],
+              "message": "{{greeting}}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+In this example:
+- `{{trigger.user_id}}` comes from global scope
+- `{{user.friends}}` comes from pipeline step
+- `{{friend.name}}` comes from loop scope (shadows any outer `friend`)
+- `{{greeting}}` comes from action output scope
 
 ### Default Values
 
@@ -1872,21 +2171,194 @@ interface SortConfig {
 
 ## Action Executors
 
-### Available Actions
+Actions are side-effect operations or control-flow blocks. Each action type has:
+- Parameter validation
+- Execution logic
+- Structured result output (for downstream steps or logs)
+- Optional `on_failure` compensating action
 
-| Action | Description | Parameters |
-|--------|-------------|------------|
-| `send_email` | Send email via SendGrid | to, subject, body, template? |
-| `create_post` | Create a post in a room | room_id, content, author_id, title?, is_pinned? |
-| `send_notification` | Push notification | to (user_ids or "admins"), title, message |
-| `update_user` | Update user fields | user_id, fields to update |
-| `create_mission` | Create a mission | title, description, xp, mission_type |
-| `award_xp` | Give XP to user | user_id, amount, reason |
-| `flag_content` | Flag post/comment | content_type, content_id, reason, set_status |
-| `webhook` | Call external URL | url, method, body, headers |
-| `for_each` | Loop over items | items, as, do (nested actions) |
-| `ai_analyze` | AI analysis | input, prompt, output_var |
-| `ai_generate` | AI content generation | prompt, output_var, max_tokens? |
+### Available Actions by Category
+
+| Category | Actions |
+|----------|---------|
+| **Communication** | send_email, send_notification, send_push |
+| **Content** | create_post, update_post, flag_post, delete_post, create_comment |
+| **Users** | update_user, award_xp, award_badge, update_engagement_score, connect_wallet |
+| **Missions** | create_mission, complete_mission, assign_mission, expire_mission |
+| **Contributions** | create_contribution, complete_contribution, award_contribution_xp |
+| **Campaigns** | start_campaign, end_campaign, select_winners |
+| **NFT/Web3** | mint_nft_badge, transfer_token, verify_wallet, check_token_balance |
+| **Gamification** | start_streak, extend_streak, reset_streak, award_milestone |
+| **Rooms** | add_to_room, remove_from_room, grant_room_access |
+| **State** | set_state, get_state, delete_state |
+| **Flow Control** | for_each, condition, request_approval, emit_event |
+| **AI** | ai_analyze, ai_generate, ai_classify |
+| **External** | webhook_call |
+| **Klaviyo** | klaviyo.sync_profile, klaviyo.add_to_list, klaviyo.trigger_flow, klaviyo.track_event |
+| **Integrations** | slack.send_message, discord.send_message, mailchimp.add_subscriber, twilio.send_sms |
+| **Files** | generate_pdf, resize_image |
+| **Compensate** | on_failure (wrapper for any action) |
+
+### Action Details
+
+#### Communication Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `send_email` | to, subject, body, template?, from? | Send email via SendGrid |
+| `send_notification` | to (user_ids or "admins"), title, message | In-app notification |
+| `send_push` | to, title, body, data? | Push notification to mobile/browser |
+
+#### Content Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `create_post` | room_id, content, author_id, title?, is_pinned? | Create a post in a room |
+| `update_post` | post_id, fields | Update existing post fields |
+| `delete_post` | post_id, reason? | Soft-delete a post |
+| `flag_post` | post_id, reason, set_status? | Flag post for review |
+| `create_comment` | post_id, content, author_id | Add comment to post |
+
+#### User Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `update_user` | user_id, fields | Update user profile fields |
+| `award_xp` | user_id, amount, reason | Give XP to user |
+| `award_badge` | user_id, badge_id, reason? | Award badge to user |
+| `update_engagement_score` | user_id, delta, reason | Adjust engagement score |
+| `connect_wallet` | user_id, wallet_address, chain_id | Link Web3 wallet |
+
+#### Mission Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `create_mission` | title, description, xp, mission_type, room_id? | Create a new mission |
+| `complete_mission` | mission_id, user_id | Mark mission as completed |
+| `assign_mission` | mission_id, user_ids | Assign mission to users |
+| `expire_mission` | mission_id, reason? | Force-expire a mission |
+
+#### Contribution Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `create_contribution` | user_id, type, metadata | Create contribution record |
+| `complete_contribution` | contribution_id | Mark contribution complete |
+| `award_contribution_xp` | contribution_id, amount | Award XP for contribution |
+
+#### Campaign Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `start_campaign` | campaign_id | Activate a campaign |
+| `end_campaign` | campaign_id | End campaign and finalize |
+| `select_winners` | campaign_id, count, criteria? | Select campaign winners |
+
+#### NFT/Web3 Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `mint_nft_badge` | badge_id, user_id, wallet_address, chain_id | Mint NFT badge to user |
+| `transfer_token` | from_wallet, to_wallet, amount, token_address | Transfer tokens |
+| `verify_wallet` | user_id, wallet_address, signature | Verify wallet ownership |
+| `check_token_balance` | wallet_address, token_address, min_balance | Check token balance gate |
+
+#### Gamification Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `start_streak` | user_id, streak_type | Start a new streak |
+| `extend_streak` | user_id, streak_type | Extend existing streak by 1 day |
+| `reset_streak` | user_id, streak_type, reason | Reset streak (user lost it) |
+| `award_milestone` | user_id, milestone_id, xp? | Award milestone achievement |
+
+#### Room Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `add_to_room` | user_id, room_id, role? | Add user to room |
+| `remove_from_room` | user_id, room_id, reason? | Remove user from room |
+| `grant_room_access` | user_id, room_id, access_level | Grant specific room access |
+
+#### State Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `set_state` | key, value | Store key-value for this app |
+| `get_state` | key, output_var | Retrieve stored value |
+| `delete_state` | key | Remove stored value |
+
+#### Flow Control Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `for_each` | items, as, do (nested actions) | Loop over items |
+| `condition` | if (expression), then, else? | Conditional branching |
+| `request_approval` | action_preview, timeout_days?, approvers? | Pause for admin approval |
+| `emit_event` | event_name, payload | Emit custom event (for app chaining) |
+
+#### AI Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `ai_analyze` | input, prompt, output_var | AI analysis of content |
+| `ai_generate` | prompt, output_var, max_tokens? | AI content generation |
+| `ai_classify` | input, categories, output_var | AI classification |
+
+#### Klaviyo Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `klaviyo.sync_profile` | user_id, properties? | Sync user to Klaviyo |
+| `klaviyo.add_to_list` | list_id, email | Add to Klaviyo list |
+| `klaviyo.trigger_flow` | flow_id, email, properties? | Trigger Klaviyo flow |
+| `klaviyo.track_event` | event_name, email, properties | Track Klaviyo event |
+
+#### External Integration Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `webhook_call` | url, method, body?, headers? | Call external URL |
+| `slack.send_message` | channel, message, blocks? | Send Slack message |
+| `discord.send_message` | channel_id, message, embeds? | Send Discord message |
+| `mailchimp.add_subscriber` | list_id, email, merge_fields? | Add Mailchimp subscriber |
+| `twilio.send_sms` | to, body | Send SMS via Twilio |
+
+#### File Actions
+
+| Action | Parameters | Description |
+|--------|------------|-------------|
+| `generate_pdf` | template, data, output_var | Generate PDF from template |
+| `resize_image` | image_url, width, height, output_var | Resize image |
+
+### Compensating Actions (on_failure)
+
+Any action can include an `on_failure` block that executes if the primary action fails. This enables rollback/compensation patterns:
+
+```json
+{
+  "type": "award_xp",
+  "params": {
+    "user_id": "{{user.id}}",
+    "amount": 100,
+    "reason": "Mission completed"
+  },
+  "on_failure": {
+    "type": "send_notification",
+    "params": {
+      "to": ["admins"],
+      "title": "XP Award Failed",
+      "message": "Failed to award XP to {{user.email}}: {{error.message}}"
+    }
+  }
+}
+```
+
+**Use Cases for Compensating Actions:**
+- Notify admins when critical actions fail
+- Revert partial changes (e.g., if NFT mint fails after XP awarded, revoke the XP)
+- Log failures to external systems
+- Trigger alternative workflows
 
 ### Action Interface
 
@@ -2016,6 +2488,234 @@ interface WebhookLog {
   timestamp: Date;
 }
 ```
+
+---
+
+## UI Widgets
+
+Apps can generate UI widgets for display in the admin panel or community dashboard. Widgets provide real-time visibility into metrics and activity.
+
+### Available Widget Types
+
+| Widget Type | Description | Decommerce Example |
+|-------------|-------------|-------------------|
+| `stat_card` | Single metric with label | "Missions Completed Today: 47" |
+| `leaderboard` | Top N users table | "Top 10 XP Earners This Week" |
+| `chart_line` | Time series chart | "Daily Active Users (30 days)" |
+| `chart_bar` | Bar chart | "Missions by Type (Trivia, Hangman, Survey)" |
+| `table` | Data table with columns | "Recent Reward Claims" |
+| `progress_ring` | Circular progress indicator | "Campaign Progress: 73% Complete" |
+| `activity_feed` | Recent events stream | "Live Mission Completions" |
+
+### Widget Configuration Schema
+
+```typescript
+interface WidgetConfig {
+  type: WidgetType;
+  title: string;
+  description?: string;
+  data_source: DataSourceConfig;
+  refresh_interval?: number;  // seconds, default: 300 (5 min)
+  display?: DisplayOptions;
+}
+
+interface DataSourceConfig {
+  connector: string;       // Data connector to use
+  filter?: Record<string, any>;
+  sort?: { field: string; order: 'asc' | 'desc' };
+  limit?: number;
+}
+
+interface DisplayOptions {
+  // For stat_card
+  format?: 'number' | 'currency' | 'percentage';
+  trend?: boolean;        // Show up/down arrow compared to previous period
+
+  // For leaderboard
+  columns?: string[];     // Which fields to show
+  show_rank?: boolean;
+
+  // For charts
+  x_axis?: string;        // Field for X axis
+  y_axis?: string;        // Field for Y axis
+  color?: string;
+}
+```
+
+### Widget Examples
+
+**Stat Card: Daily Mission Completions**
+
+```json
+{
+  "type": "stat_card",
+  "title": "Missions Completed Today",
+  "data_source": {
+    "connector": "contributions",
+    "filter": {
+      "type": "mission",
+      "completed_at": { "gte": "{{today}}" }
+    }
+  },
+  "display": {
+    "format": "number",
+    "trend": true
+  }
+}
+```
+
+**Leaderboard: Top XP Earners**
+
+```json
+{
+  "type": "leaderboard",
+  "title": "Top 10 XP Earners This Week",
+  "data_source": {
+    "connector": "users",
+    "filter": { "xp_earned_this_week": { "gt": 0 } },
+    "sort": { "field": "xp_earned_this_week", "order": "desc" },
+    "limit": 10
+  },
+  "display": {
+    "columns": ["rank", "name", "avatar", "xp_earned_this_week"],
+    "show_rank": true
+  }
+}
+```
+
+**Progress Ring: Campaign Progress**
+
+```json
+{
+  "type": "progress_ring",
+  "title": "Summer Campaign Progress",
+  "data_source": {
+    "connector": "campaigns",
+    "filter": { "id": "{{campaign_id}}" }
+  },
+  "display": {
+    "value_field": "missions_completed",
+    "max_field": "missions_total",
+    "color": "#4CAF50"
+  }
+}
+```
+
+### Widget Placement
+
+Widgets can be rendered in multiple locations:
+
+| Location | Description |
+|----------|-------------|
+| Admin Dashboard | Main admin panel overview |
+| App Detail Page | Specific to one app's output |
+| Community Dashboard | Public-facing community page |
+| Room Sidebar | Contextual widgets for specific rooms |
+
+---
+
+## Native OAuth Integrations
+
+Like WordPress plugins can connect to external services, micro-apps support native OAuth integrations with popular third-party platforms. We build direct API connections—everything stays within the Decommerce admin panel.
+
+### Connectivity Tiers
+
+| Tier | What It Is | Examples |
+|------|------------|----------|
+| **Core Actions** | Platform-built actions for Decommerce operations | award_xp, create_post, send_email, mint_nft_badge |
+| **Native OAuth** | Direct API connections to external services | HubSpot, Google Sheets, Salesforce, Airtable |
+
+### How OAuth Integrations Work
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ 1. Admin: Settings → Integrations → Connect [Service]          │
+│                           ↓                                     │
+│ 2. Redirect to service login (e.g., HubSpot OAuth page)        │
+│                           ↓                                     │
+│ 3. Admin authorizes Decommerce to access their account         │
+│                           ↓                                     │
+│ 4. Platform stores encrypted OAuth tokens securely             │
+│                           ↓                                     │
+│ 5. Micro-apps can now use actions like `hubspot.create_contact`│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Integration Roadmap
+
+| Service | Actions | Phase |
+|---------|---------|-------|
+| **Klaviyo** ✅ | sync_profile, add_to_list, trigger_flow, track_event | v1 (exists) |
+| **HubSpot** | create_contact, update_contact, add_to_list, update_deal | Phase 2 |
+| **Google Sheets** | append_row, read_range, update_cell, create_sheet | Phase 2 |
+| **Salesforce** | create_lead, update_opportunity, sync_contact | Phase 3 |
+| **Airtable** | create_record, update_record, query_records | Phase 3 |
+| **Notion** | create_page, update_database, query_database | Phase 3 |
+
+### Why Native OAuth (Not Zapier/Middleware)
+
+- **Simpler architecture**: One system to manage, not two
+- **Better UX**: Everything in the Decommerce admin panel
+- **No extra cost**: Users don't need additional subscriptions
+- **More control**: We own the integration quality and can optimize for Decommerce use cases
+
+### OAuth Integration Architecture
+
+```typescript
+// Tenant settings include encrypted OAuth tokens
+interface TenantIntegrationSettings {
+  integrations: {
+    [service: string]: {
+      connected: boolean;
+      connected_at: Date;
+      connected_by: number;  // user_id
+      access_token_encrypted: string;
+      refresh_token_encrypted: string;
+      token_expires_at: Date;
+      scopes: string[];
+    };
+  };
+}
+
+// OAuth service handles token refresh
+@Injectable()
+export class OAuthService {
+  async getValidToken(tenantId: string, service: string): Promise<string> {
+    const settings = await this.getTenantIntegration(tenantId, service);
+
+    if (settings.token_expires_at < new Date()) {
+      return this.refreshToken(tenantId, service);
+    }
+
+    return this.decrypt(settings.access_token_encrypted);
+  }
+
+  async refreshToken(tenantId: string, service: string): Promise<string> {
+    const refreshToken = this.decrypt(settings.refresh_token_encrypted);
+    const newTokens = await this.oauthClient[service].refresh(refreshToken);
+
+    await this.updateTenantIntegration(tenantId, service, {
+      access_token_encrypted: this.encrypt(newTokens.access_token),
+      refresh_token_encrypted: this.encrypt(newTokens.refresh_token),
+      token_expires_at: newTokens.expires_at,
+    });
+
+    return newTokens.access_token;
+  }
+}
+```
+
+### Integration Settings UI
+
+Admins manage connected services in Settings → Integrations:
+
+| Feature | Description |
+|---------|-------------|
+| View connected accounts | See which services are connected and their status |
+| Connection status | Active, expired, or disconnected indicators |
+| Disconnect/reconnect | Revoke access or re-authenticate |
+| Usage metrics | API calls made per integration |
+| Token management | Automatic refresh handled by platform |
 
 ---
 
@@ -2197,17 +2897,71 @@ await delayedTriggerService.cancelPendingExecutions(app.id, user_id);
 
 ### Available Events
 
+Events are organized by category and can be used as triggers for micro-apps.
+
+#### Events by Category
+
+| Category | Event Names |
+|----------|-------------|
+| **User Lifecycle** | user.created, user.updated, user.deleted, user.login, user.wallet_connected |
+| **Content** | post.created, post.updated, post.deleted, post.flagged, comment.created |
+| **Missions** | mission.created, mission.completed, mission.expired, mission.assigned |
+| **Contributions** | contribution.created, contribution.completed, contribution.expired |
+| **Rewards** | reward.claimed, xp.awarded, badge.earned, milestone.reached |
+| **Campaigns** | campaign.started, campaign.ended, campaign.winner_selected |
+| **NFT Badges** | nft_badge.minted, nft_badge.claimed, nft_badge.transferred |
+| **Streaks** | streak.started, streak.extended, streak.broken |
+| **Games** | hangman.completed, trivia.completed, spin_wheel.completed, survey.completed |
+| **Rooms** | room.created, room.member_joined, room.member_left, room.access_requested |
+| **Shopify** | shopify.order.created, shopify.order.fulfilled, shopify.customer.created |
+| **Custom** | Any event emitted by another app via `emit_event` action |
+
+#### Event Payload Reference
+
 | Event | Fires When | Payload |
 |-------|------------|---------|
-| `user.created` | New user signs up | `{ user_id, email }` |
-| `user.verified` | Email verified | `{ user_id }` |
-| `post.created` | New post created | `{ post_id, author_id, room_id }` |
-| `post.reported` | Post reported | `{ post_id, reporter_id }` |
+| `user.created` | New user signs up | `{ user_id, email, source }` |
+| `user.updated` | User profile updated | `{ user_id, changed_fields }` |
+| `user.deleted` | User account deleted | `{ user_id, email }` |
+| `user.login` | User logs in | `{ user_id, ip_address, device }` |
+| `user.wallet_connected` | User connects Web3 wallet | `{ user_id, wallet_address, chain_id }` |
+| `post.created` | New post created | `{ post_id, author_id, room_id, content_preview }` |
+| `post.updated` | Post edited | `{ post_id, author_id, changed_fields }` |
+| `post.deleted` | Post deleted | `{ post_id, author_id, reason }` |
+| `post.flagged` | Post reported/flagged | `{ post_id, reporter_id, reason }` |
+| `comment.created` | New comment on post | `{ comment_id, post_id, author_id }` |
+| `mission.created` | New mission created | `{ mission_id, title, xp_reward, room_id }` |
 | `mission.completed` | User completes mission | `{ user_id, mission_id, xp_earned }` |
-| `reward.claimed` | User claims reward | `{ user_id, contribution_id }` |
-| `room.joined` | User joins room | `{ user_id, room_id }` |
-| `shopify.order.created` | New Shopify order | `{ order_id, customer_email, total }` |
-| `shopify.order.fulfilled` | Order fulfilled | `{ order_id, customer_email }` |
+| `mission.expired` | Mission deadline passed | `{ mission_id, affected_users }` |
+| `mission.assigned` | Mission assigned to user | `{ mission_id, user_id }` |
+| `contribution.created` | New contribution started | `{ contribution_id, user_id, type }` |
+| `contribution.completed` | Contribution completed | `{ contribution_id, user_id, xp_earned }` |
+| `contribution.expired` | Contribution expired | `{ contribution_id, user_id }` |
+| `reward.claimed` | User claims reward | `{ user_id, contribution_id, reward_type }` |
+| `xp.awarded` | XP awarded to user | `{ user_id, amount, reason, source }` |
+| `badge.earned` | User earns badge | `{ user_id, badge_id, badge_name }` |
+| `milestone.reached` | User reaches XP milestone | `{ user_id, milestone_id, xp_total }` |
+| `campaign.started` | Campaign begins | `{ campaign_id, title, start_date }` |
+| `campaign.ended` | Campaign ends | `{ campaign_id, title, end_date }` |
+| `campaign.winner_selected` | Campaign winner chosen | `{ campaign_id, winner_ids }` |
+| `nft_badge.minted` | NFT badge minted | `{ user_id, badge_id, token_id, tx_hash }` |
+| `nft_badge.claimed` | NFT badge claimed | `{ user_id, badge_id, token_id }` |
+| `nft_badge.transferred` | NFT badge transferred | `{ from_user, to_user, token_id }` |
+| `streak.started` | User starts streak | `{ user_id, streak_type }` |
+| `streak.extended` | Streak extended by 1 day | `{ user_id, streak_type, days_count }` |
+| `streak.broken` | Streak lost | `{ user_id, streak_type, final_count }` |
+| `hangman.completed` | Hangman game finished | `{ user_id, mission_id, won, attempts }` |
+| `trivia.completed` | Trivia game finished | `{ user_id, mission_id, score, correct_answers }` |
+| `spin_wheel.completed` | Spin wheel used | `{ user_id, mission_id, prize }` |
+| `survey.completed` | Survey completed | `{ user_id, mission_id, responses }` |
+| `room.created` | New room created | `{ room_id, creator_id, room_type }` |
+| `room.member_joined` | User joins room | `{ user_id, room_id }` |
+| `room.member_left` | User leaves room | `{ user_id, room_id, reason }` |
+| `room.access_requested` | User requests room access | `{ user_id, room_id }` |
+| `shopify.order.created` | New Shopify order | `{ order_id, customer_email, total, currency }` |
+| `shopify.order.fulfilled` | Order fulfilled | `{ order_id, customer_email, tracking_number }` |
+| `shopify.customer.created` | New Shopify customer | `{ customer_id, email, tenant_id }` |
+| Custom event | App emits custom event | User-defined payload via `emit_event` |
 
 ### Trigger Filter Syntax
 
@@ -2559,6 +3313,208 @@ export class AppEventListenerService {
 ```
 
 </details>
+
+---
+
+## Approval Queues
+
+High-impact actions can require admin approval before executing. The `request_approval` action pauses execution until an admin approves or rejects.
+
+### Approval State Machine
+
+```
+┌─────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   App   │───▶│  Execution  │───▶│   request_   │───▶│   PAUSED    │
+│ Trigger │    │   starts    │    │   approval   │    │  (waiting)  │
+└─────────┘    └─────────────┘    └──────────────┘    └──────┬──────┘
+                                                              │
+                                         ┌────────────────────┼────────────────────┐
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │   APPROVE   │      │   REJECT    │      │   TIMEOUT   │
+                                  │ (continue)  │      │  (cancel)   │      │ (7 days)    │
+                                  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │  Continue   │      │   Execution │      │   Execution │
+                                  │  execution  │      │   cancelled │      │   cancelled │
+                                  └─────────────┘      └─────────────┘      └─────────────┘
+```
+
+### Request Approval Action
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action_preview` | object | Yes | What the admin sees (summary of pending action) |
+| `timeout_days` | number | No | Days until auto-reject (default: 7) |
+| `approvers` | string[] | No | User IDs or "admins" (default: "admins") |
+| `notify_channels` | string[] | No | How to notify (email, push, in_app) |
+
+### Example: Mass XP Award Approval
+
+```json
+{
+  "type": "request_approval",
+  "params": {
+    "action_preview": {
+      "action": "award_xp",
+      "description": "Award 500 XP to {{users:count}} users",
+      "details": {
+        "affected_users": "{{users:count}}",
+        "total_xp": "{{users:count * 500}}",
+        "reason": "Weekly challenge winners"
+      }
+    },
+    "timeout_days": 3,
+    "approvers": ["admins"],
+    "notify_channels": ["email", "in_app"]
+  }
+}
+```
+
+### Admin Approval UI
+
+Admins see pending approvals in the Apps dashboard:
+
+| Field | Description |
+|-------|-------------|
+| App Name | Which app requested approval |
+| Action Preview | Summary of what will happen |
+| Requested At | When the approval was requested |
+| Expires At | When it will auto-reject |
+| Actions | Approve, Reject, View Details |
+
+### Approval Entity
+
+```typescript
+@Entity('app_approvals')
+export class AppApproval {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @ManyToOne(() => App)
+  app: App;
+
+  @Column({ type: 'int' })
+  execution_id: number;
+
+  @Column({ type: 'jsonb' })
+  action_preview: any;
+
+  @Column({ type: 'enum', enum: ApprovalStatus })
+  status: ApprovalStatus;  // PENDING, APPROVED, REJECTED, TIMEOUT
+
+  @Column({ type: 'timestamp' })
+  expires_at: Date;
+
+  @Column({ type: 'int', nullable: true })
+  decided_by: number;  // user_id of approver
+
+  @Column({ type: 'timestamp', nullable: true })
+  decided_at: Date;
+
+  @Column({ type: 'text', nullable: true })
+  decision_note: string;
+
+  @CreateDateColumn()
+  created_at: Date;
+}
+
+enum ApprovalStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  TIMEOUT = 'TIMEOUT',
+}
+```
+
+### When to Use Approval Queues
+
+| Scenario | Why |
+|----------|-----|
+| Mass XP awards (>1000 total XP) | Prevent accidental inflation |
+| NFT minting to many users | High gas cost, irreversible |
+| Sending emails to large lists | Prevent spam, verify content |
+| User role changes | Security-sensitive operation |
+| Campaign winner selection | Ensure fairness, allow review |
+
+---
+
+## App Chaining
+
+Apps can communicate with each other through custom events. One app emits an event, and another app listens for it.
+
+### Event Emission Pattern
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         TENANT SCOPE                                │
+│                                                                     │
+│  ┌─────────────┐         emit_event          ┌─────────────┐       │
+│  │    APP A    │────────────────────────────▶│  Event Bus  │       │
+│  │ "Mission    │   "high_achiever"           │             │       │
+│  │  Tracker"   │                             └──────┬──────┘       │
+│  └─────────────┘                                    │              │
+│                                                     │ matches      │
+│                                                     │ trigger      │
+│                                                     ▼              │
+│  ┌─────────────┐                            ┌─────────────┐        │
+│  │    APP B    │◀───────────────────────────│   Trigger   │        │
+│  │ "NFT Badge  │   event: custom.high_achiever              │       │
+│  │  Minter"    │                            └─────────────┘        │
+│  └─────────────┘                                                   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Emitting Events
+
+```json
+{
+  "type": "emit_event",
+  "params": {
+    "event_name": "high_achiever",
+    "payload": {
+      "user_id": "{{user.id}}",
+      "xp_total": "{{user.xp_total}}",
+      "achievement": "first_1000_xp"
+    }
+  }
+}
+```
+
+### Listening for Custom Events
+
+Custom events are prefixed with `custom.` in the trigger:
+
+```json
+{
+  "trigger": {
+    "type": "event",
+    "event": "custom.high_achiever",
+    "filter": {
+      "achievement": "first_1000_xp"
+    }
+  }
+}
+```
+
+### App Chaining Use Cases
+
+| Scenario | App A | Emits | App B |
+|----------|-------|-------|-------|
+| Milestone celebration | XP Tracker | `milestone_reached` | Badge Minter |
+| Referral rewards | Signup Tracker | `referral_completed` | XP Awarder |
+| Campaign completion | Mission Tracker | `campaign_completed` | Winner Announcer |
+| VIP detection | Purchase Tracker | `vip_threshold_reached` | Room Access Granter |
+
+### Chaining Best Practices
+
+1. **Namespace your events**: Use descriptive names like `mission.streak_achieved` not just `achieved`
+2. **Include sufficient context**: Pass user_id, relevant IDs, and computed values in payload
+3. **Document your events**: Other admins should know what events your apps emit
+4. **Avoid circular chains**: App A triggers App B triggers App A = infinite loop (system prevents this)
 
 ---
 
@@ -2919,6 +3875,62 @@ class SendEmailAction {
 
 ---
 
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| App not running | Status is "paused" or "error" | Check status in Apps UI; resume or fix errors |
+| Missing data in actions | Variable not in scope | Check pipeline step IDs match variable references |
+| Email not sent | Rate limit exceeded | Check quota in tenant settings; wait or upgrade |
+| Event trigger not firing | Event name mismatch | Verify exact event name spelling (e.g., `mission.completed` not `missionCompleted`) |
+| Loop processing partial | Timeout reached | Reduce items per run or split into multiple apps |
+| AI action failing | Token limit exceeded | Reduce prompt size or batch items |
+| Webhook failing | Domain not allowlisted | Add domain to tenant webhook allowlist |
+| State not persisting | Key limit exceeded | Delete unused keys or upgrade tier |
+
+### Decommerce-Specific Issues
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| NFT mint failing | Wallet not connected or insufficient gas | Verify user has `web3_account`; check chain gas prices |
+| Streak not updating | Contribution timestamp issue | Verify `contribution.created` fires before midnight UTC |
+| Mission not completing | Action requirements not met | Check `mission.action_type` matches user's actual activity |
+| Klaviyo sync failing | API key invalid or list not found | Verify Klaviyo settings in tenant configuration |
+| XP not awarded | Duplicate contribution check | Each contribution type can only award XP once per period |
+| Badge already minted | User already has badge | Check `nft_badges` connector for existing badge ownership |
+| Room access denied | User not a member | Use `add_to_room` action before sending room-specific content |
+| Campaign winner not selected | Campaign still active | Ensure `campaign.end_date` has passed before selecting winners |
+| Trivia/Hangman stuck | Game state corrupted | Check `trivia_status` or `hangman_status` connector for state |
+| Shopify order not matched | Email mismatch | Verify customer email in Shopify matches community user email |
+
+### Debugging Steps
+
+1. **Check Execution Logs**: Apps UI → App Details → Execution History
+2. **Review Error Messages**: Logs show exact failure point and error
+3. **Validate Configuration**: Use "Test Run" to validate without side effects
+4. **Check Rate Limits**: Tenant Settings → Usage shows current quota usage
+5. **Inspect Variables**: Execution logs show variable values at each step
+6. **Test with Fewer Items**: Reduce loop items to isolate issues
+
+### Error Codes
+
+| Code | Meaning | Resolution |
+|------|---------|------------|
+| E001 | Invalid configuration | Fix schema errors shown in validation |
+| E002 | Rate limit exceeded | Wait for reset or upgrade tier |
+| E003 | Execution timeout | Break into smaller apps or reduce loop items |
+| E004 | Connector error | Check filter syntax and data availability |
+| E005 | Action failed | Review action parameters and permissions |
+| E006 | Variable not found | Ensure variable is defined in scope |
+| E007 | External service error | Check webhook URL and service status |
+| E008 | Approval timeout | Approval request expired after 7 days |
+| E009 | App paused | Too many consecutive failures; fix issues and resume |
+| E010 | Tenant quota exceeded | Upgrade plan or reduce usage |
+
+---
+
 ## Key Reference Files
 
 ### Backend (NestJS)
@@ -2992,12 +4004,33 @@ interface TenantRateLimits {
 
 ### Rate Limit Tiers
 
-| Tier | AI Calls/Hour | AI Calls/Day | Tokens/Day | App Executions/Hour |
-|------|---------------|--------------|------------|---------------------|
-| **Free** | 100 | 500 | 100,000 | 20 |
-| **Starter** | 300 | 2,000 | 500,000 | 50 |
-| **Pro** | 500 | 5,000 | 1,000,000 | 100 |
-| **Enterprise** | Custom | Custom | Custom | Custom |
+| Resource | Free | Starter | Pro | Enterprise |
+|----------|------|---------|-----|------------|
+| Apps | 10 | 25 | 100 | Unlimited |
+| Executions/hour | 50 | 200 | 1,000 | 5,000 |
+| AI calls/day | 100 | 500 | 2,000 | 10,000 |
+| AI tokens/day | 100,000 | 500,000 | 1,000,000 | Custom |
+| Emails/day | 100 | 1,000 | 10,000 | 100,000 |
+| Webhooks/hour | 50 | 200 | 1,000 | 5,000 |
+| State storage keys | 50 | 200 | 1,000 | 10,000 |
+| Chat messages/hour | 20 | 50 | 200 | 1,000 |
+
+### State Storage Limits
+
+Apps can store persistent key-value data for tracking state between executions.
+
+| Limit | Value | Description |
+|-------|-------|-------------|
+| Max keys per app | Tier-based (50-10,000) | See tier table above |
+| Max value size | 10 KB | Per individual value |
+| Key name length | 255 chars | Alphanumeric and underscores |
+| TTL (time-to-live) | Optional | Auto-delete after N days |
+
+**Use Cases:**
+- Store "last_leaderboard_positions" to detect rank changes
+- Track "processed_mission_ids" to avoid duplicate notifications
+- Save "streak_reminder_sent" to prevent multiple reminders per day
+- Cache "campaign_stats" for dashboard widgets
 
 ### Rate Limit Enforcement
 
