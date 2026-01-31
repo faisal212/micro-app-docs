@@ -348,6 +348,50 @@ These powerful features work through configuration, not custom code:
 | Mailchimp | add_subscriber, update_tags | Segment users by engagement level, tag by badges earned |
 | Twilio | send_sms | Send streak expiring warnings, reward claim confirmations |
 
+#### External Integrations (Native OAuth)
+
+Like WordPress plugins can connect to external services, our micro-apps support native OAuth integrations with popular third-party platforms. We build direct API connections that provide the best user experience—everything stays within the Decommerce admin panel.
+
+**Two tiers of connectivity:**
+
+| Tier | What It Is | Examples |
+|------|------------|----------|
+| **Core Actions** | Platform-built actions for Decommerce operations | award_xp, create_post, send_email, mint_nft_badge |
+| **Native OAuth** | Direct API connections to external services | HubSpot, Google Sheets, Salesforce, Airtable |
+
+**How OAuth integrations work:**
+
+1. Admin goes to Settings → Integrations → Connect [Service]
+2. Admin clicks "Connect" → redirected to service's login (e.g., HubSpot)
+3. Admin authorizes Decommerce to access their account
+4. Platform stores encrypted OAuth tokens securely
+5. Micro-apps can now use actions like `hubspot.create_contact`
+
+**Integration roadmap:**
+
+| Service | Actions | Phase |
+|---------|---------|-------|
+| HubSpot | create_contact, update_contact, add_to_list, update_deal | Phase 2 |
+| Google Sheets | append_row, read_range, update_cell, create_sheet | Phase 2 |
+| Salesforce | create_lead, update_opportunity, sync_contact | Phase 3 |
+| Airtable | create_record, update_record, query_records | Phase 3 |
+| Notion | create_page, update_database, query_database | Phase 3 |
+
+**Why native OAuth (not Zapier/middleware):**
+
+- **Simpler architecture**: One system to manage, not two
+- **Better UX**: Everything in the Decommerce admin panel
+- **No extra cost**: Users don't need additional subscriptions
+- **More control**: We own the integration quality and can optimize for Decommerce use cases
+
+**Integration settings (per tenant):**
+
+Admins manage their connected services in Settings → Integrations:
+- View connected accounts and connection status
+- Disconnect/reconnect services
+- See usage metrics per integration
+- Manage OAuth token refresh
+
 #### UI Widgets
 
 | Widget Type | Description | Decommerce Example |
