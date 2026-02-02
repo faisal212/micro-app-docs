@@ -1,85 +1,108 @@
-# Decommerce MCP + AI Micro-Apps — Technical Specification
+# Decommerce MCP + AI Micro-Apps — Plain-English Specification (No-Code)
+
+This document is the plain-English companion to `MCP-integration-technical.md`. It describes the **same system and requirements**, but without code snippets. The goal is alignment: **what we’re building, what it can do, and where the hard edges are**.
+
+**Audience**: product, engineering, ops, and anyone reviewing the micro-app/MCP direction.  
+**Not included**: implementation details, exact endpoints/DTOs, or database schema diffs (those live in the technical doc and codebase).
+
+This is a planning document. Unless a section explicitly says “we already do this today”, treat the statements below as **target behavior** we intend to implement.
+
+---
+
+## How to read this doc
+
+- If you want the “why” and high-level shape, read **Executive Summary → Vision & Goals → System Architecture**.
+- If you want to sanity-check safety and constraints, read **What Micro-Apps Can and Cannot Do → Execution Safeguards → Rate Limits & Quotas**.
+- If you want to understand the building blocks an app config can use, read **App Configuration Schema → Connectors → Actions → Triggers**.
+
+---
+
+## Glossary (quick definitions)
+
+- **Micro-app**: A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not "custom code".
+- **MCP server**: The protocol layer exposing safe, tenant-scoped tools/resources that an AI agent can call.
+- **App Framework**: The runtime that stores, validates, schedules, executes, and logs micro-apps.
+- **AI Provider**: The LLM service that interprets admin requests and generates app configs. Admins can choose between Claude, ChatGPT, Gemini, etc.
+- **Provider Adapter**: Translates between our tool definitions and each AI's specific format (Claude's tool_use, OpenAI's function calling, etc.).
+- **Connector**: A read-only data fetch step (e.g., users, missions, shopify orders).
+- **Action**: A side-effect or control-flow step (e.g., award XP, create post, request approval).
+- **Trigger**: What causes execution (scheduled, event-driven, manual, delayed).
+- **Tenant-scoped**: Every tool call / app execution runs inside a single tenant boundary; no cross-tenant access.
+
+---
+
+## Assumptions & open questions (read this before debating numbers)
+
+This spec includes a few concrete limits (timeouts, loop sizes, quotas). Unless the codebase already enforces them, treat them as **target defaults** until we wire enforcement into configuration validation + runtime safeguards.
+
+- **Numeric limits (target defaults)**: execution timeout (5 minutes), loop cap (5,000), “apps per tenant” (100), AI calls per execution (500), emails per execution (2,000).
+- **Tier quotas (directional)**: the tier table is a placeholder unless your billing/plan system already defines these exact numbers.
+- **Open questions**:
+  - Do we want a single global execution timeout, or per-action/per-connector timeouts too?
+  - Where do we enforce email/webhook quotas: at MCP tool-level, execution runtime, or both?
+  - Which parts of "UI widgets" are v1 vs later (cards/leaderboards/charts)?
+  - Which AI provider(s) do we ship with in v1? (Claude + OpenAI seem like the obvious starting pair)
+  - Do we let tenants bring their own API keys, or do we provide a pooled key with usage metering?
+
+---
 
 ## Table of Contents
 
-1. [Glossary](#glossary)
-2. [Executive Summary](#executive-summary)
-3. [How Micro-Apps Help Decommerce](#how-micro-apps-help-decommerce)
-4. [Vision & Goals](#vision--goals)
-5. [The Big Picture: A Development Framework for AI](#the-big-picture-a-development-framework-for-ai)
+1. [Executive Summary](#executive-summary)
+2. [How Micro-Apps Help Decommerce *(business value)*](#how-micro-apps-help-decommerce)
+3. [Vision & Goals](#vision--goals)
+4. [The Big Picture: A Development Framework for AI](#the-big-picture-a-development-framework-for-ai)
+5. [What Micro-Apps Can and Cannot Do *(capabilities, boundaries, and enhanced capabilities)*](#what-micro-apps-can-and-cannot-do)
 6. [Why MCP + Micro-Apps?](#why-mcp--micro-apps)
 7. [System Architecture](#system-architecture)
 8. [Part 1: MCP Server](#part-1-mcp-server)
 9. [Part 2: App Framework](#part-2-app-framework)
 10. [Part 3: Admin Panel AI Chatbox](#part-3-admin-panel-ai-chatbox)
 11. [Micro-App Catalog](#micro-app-catalog)
-12. [Real-World Decommerce Scenarios](#real-world-decommerce-scenarios)
+12. [Real-World Decommerce Scenarios *(end-to-end examples)*](#real-world-decommerce-scenarios)
 13. [App Configuration Schema](#app-configuration-schema)
 14. [Variable Interpolation](#variable-interpolation)
 15. [App Configuration Validation](#app-configuration-validation)
 16. [Data Connectors](#data-connectors)
 17. [Logic Transformations](#logic-transformations)
 18. [Action Executors](#action-executors)
-19. [UI Widgets](#ui-widgets)
-20. [Native OAuth Integrations](#native-oauth-integrations)
-21. [Triggers System](#triggers-system)
-22. [Approval Queues](#approval-queues)
-23. [App Chaining](#app-chaining)
-24. [Execution Safeguards](#execution-safeguards)
-25. [Error Recovery & Retry](#error-recovery--retry)
-26. [Rate Limits & Quotas](#rate-limits--quotas)
-27. [Implementation Phases](#implementation-phases)
-28. [Testing & Verification](#testing--verification)
-29. [Troubleshooting](#troubleshooting)
-30. [Key Reference Files](#key-reference-files)
-31. [Detailed Implementation Plan](#detailed-implementation-plan)
-    - [Phase 1: Foundation (Days 1-5)](#phase-1-foundation-days-1-5)
-    - [Phase 2: Connectors & Actions (Days 6-12)](#phase-2-connectors--actions-days-6-12)
-    - [Phase 3: Triggers System (Days 13-18)](#phase-3-triggers-system-days-13-18)
-    - [Phase 4: Admin Panel (Days 19-24)](#phase-4-admin-panel-days-19-24)
-    - [Phase 5: Testing & Security (Days 25-30)](#phase-5-testing--security-days-25-30)
-    - [Database Migrations](#database-migrations)
-    - [Critical Codebase Files for Reference](#critical-codebase-files-for-reference)
-    - [Module Dependencies](#module-dependencies)
-    - [Verification Plan](#verification-plan)
-32. [Critical Security Issues](#critical-security-issues-must-fix-before-v1)
-33. [Must-Fix Priority Summary](#must-fix-priority-summary)
-
----
-
-## Glossary
-
-| Term | Definition |
-|------|------------|
-| **Micro-app** | A tenant-scoped automation defined as **configuration** (trigger + data pipeline + actions) and executed by Decommerce. Not "custom code". |
-| **MCP Server** | The protocol layer exposing safe, tenant-scoped tools/resources that an AI agent can call. |
-| **App Framework** | The runtime that stores, validates, schedules, executes, and logs micro-apps. |
-| **AI Provider** | The LLM service that interprets admin requests and generates app configs. Admins can choose between Claude, ChatGPT, Gemini, etc. |
-| **Provider Adapter** | Translates between our tool definitions and each AI's specific format (Claude's tool_use, OpenAI's function calling, etc.). |
-| **Connector** | A read-only data fetch step (e.g., users, missions, shopify orders). |
-| **Action** | A side-effect or control-flow step (e.g., award XP, create post, request approval). |
-| **Trigger** | What causes execution (scheduled, event-driven, manual, delayed). |
-| **Tenant-scoped** | Every tool call / app execution runs inside a single tenant boundary; no cross-tenant access. |
+19. [Triggers System](#triggers-system)
+20. [Execution Safeguards](#execution-safeguards)
+21. [Error Recovery & Retry](#error-recovery--retry)
+22. [Rate Limits & Quotas](#rate-limits--quotas)
+23. [Implementation Phases](#implementation-phases)
+24. [Testing & Verification](#testing--verification)
+25. [Troubleshooting](#troubleshooting)
+26. [Key Reference Files](#key-reference-files)
+27. [Things we need to get right *(security & implementation notes)*](#things-we-need-to-get-right-security--implementation-notes)
 
 ---
 
 ## Executive Summary
 
-This document specifies a system that allows **AI to create micro-apps on the Decommerce platform**. Unlike Shopify where human developers build apps, here **AI generates apps on the fly** based on admin requests via a chatbox interface.
+Think of this like WordPress plugins or Shopify apps—but instead of human developers writing code, AI creates the apps from plain English descriptions.
+
+This system is intended to let **tenant admins create micro-apps on the Decommerce platform** by describing what they want in natural language. Instead of building a bespoke integration for every workflow, we'll standardize on a small set of **approved building blocks** (connectors, actions, triggers) and let the AI assemble those blocks into an app configuration.
+
+Why this matters for Decommerce: we already have strong primitives (users, rooms, posts, missions, rewards, Shopify, notifications). Micro-apps are the layer that turns those primitives into "one-click operations" and recurring automation without waiting on a new backend deployment for every idea.
+
+**The bigger picture:** WordPress gave non-developers access to a plugin ecosystem (developers build, users install). Shopify gave merchants an app ecosystem (developers build, merchants install). Decommerce is building an AI-powered app ecosystem where admins describe what they need and AI builds it for them.
 
 **The system has three parts:**
 
 | Part | Description | Location |
 |------|-------------|----------|
-| **MCP Server** | Protocol layer allowing AI to interact with Decommerce | Backend (NestJS) |
-| **App Framework** | Engine that stores, runs, and manages micro-apps | Backend (NestJS) |
-| **AI Chatbox** | Interface where admins describe apps in natural language | Admin Panel (React) |
+| MCP Server | Protocol layer allowing AI to interact with Decommerce | Backend (NestJS) |
+| App Framework | Engine that stores, runs, and manages micro-apps | Backend (NestJS) |
+| AI Chatbox | Interface where admins describe apps in natural language | Admin Panel (React) |
+
+Admins can choose which AI provider powers their chatbox—Claude, ChatGPT, Gemini, or others. The system works the same way regardless of provider; only the "brain" changes.
 
 **Example flow:**
-1. Admin types: *"Create an app that detects low-quality posts and flags them for review"*
-2. AI understands the request and generates an app configuration
-3. App Framework saves and activates the app
-4. App runs automatically, flagging posts as they're created
+- Admin requests: "Create an app that awards 500 XP to users who complete their first mission and posts a welcome message in the #announcements room."
+- The chosen AI (Claude, ChatGPT, Gemini, etc.) interprets intent and produces an **app configuration** (not executable code).
+- App Framework will validate, store, and activate the app configuration.
+- The app will run based on its trigger (event-driven/scheduled/manual).
 
 ---
 
@@ -129,21 +152,23 @@ This system directly addresses Decommerce's core business challenges:
 
 ### Vision
 
-> "Unlike Shopify where human developers build apps, here the AI itself creates these micro-apps. Admin asks AI → AI builds the app on the fly → app is ready to use."
+AI can assemble platform capabilities into “micro-apps” on demand:
+Admin asks AI → AI produces an app configuration → Decommerce runs it safely.
 
 ### Goals
 
-- Enable tenant admins to create automation apps via natural language
-- AI generates app configurations (not code) that the framework executes
-- Support 30+ app types covering email, content, engagement, analytics, moderation
-- Maintain multi-tenant isolation — each tenant has their own apps
-- Build on existing Decommerce features (users, rooms, posts, missions, rewards, Shopify)
+- Enable tenant admins to create automation apps via natural language.
+- AI generates **configurations** (not application code) that the platform runtime executes.
+- Support 30+ app types across: email, content, engagement, analytics, moderation, Shopify.
+- Maintain strict **multi-tenant isolation**: each tenant has its own apps and data boundaries.
+- Build on existing Decommerce capabilities (users, rooms, posts, missions, rewards, Shopify, email).
 
 ### Non-Goals (Out of Scope)
 
-- AI writing actual code (React components, NestJS modules)
-- Apps that require new database tables or UI components
-- Features like DM, video chat, payments — these need core development
+- AI writing real application code (new React components, new backend modules).
+- Apps requiring new database tables or custom-coded UI components.
+  - *Note: Pre-built configurable widgets (dashboard cards, charts) ARE supported - see Enhanced Capabilities.*
+- Major platform features unrelated to automation (payments, DM, video chat, etc.).
 
 ---
 
@@ -151,7 +176,7 @@ This system directly addresses Decommerce's core business challenges:
 
 This isn't just an automation feature—it's a platform play. We're building a development framework where AI is the developer.
 
-### How It Compares to Existing Ecosystems
+### How it compares to existing ecosystems
 
 | Ecosystem | Who Develops | What They Create | How Users Get It |
 |-----------|--------------|------------------|------------------|
@@ -159,7 +184,7 @@ This isn't just an automation feature—it's a platform play. We're building a d
 | **Shopify Apps** | Human developers | API integrations + embedded UI | Merchants browse and install |
 | **Decommerce Micro-Apps** | AI | Configuration using connectors/actions/triggers | Admins describe and approve |
 
-### What Makes This Different
+### What makes this different
 
 **Traditional plugin/app ecosystems:**
 - Require developer skills or hiring developers
@@ -173,7 +198,7 @@ This isn't just an automation feature—it's a platform play. We're building a d
 - Customization is just another conversation
 - Time to new functionality: minutes
 
-### The Framework Analogy
+### The framework analogy
 
 If you've built WordPress plugins, you know the pattern: WordPress provides hooks (`add_action`, `add_filter`), database access (`$wpdb`), and UI elements (`add_menu_page`). Developers combine these to create functionality.
 
@@ -185,9 +210,9 @@ Decommerce provides the same kind of building blocks:
 
 The difference? Instead of a human writing PHP, an AI assembles JSON configuration. The framework validates it, stores it, and executes it safely.
 
-### Why Configuration Instead of Code
+### Why configuration instead of code
 
-We could let AI write actual code—but that opens risks:
+We could let AI write actual code—but that opens a can of worms:
 - Code can do anything, including things we didn't anticipate
 - Every generated script would need security review
 - Debugging AI-generated code is painful
@@ -203,940 +228,678 @@ Think of it like Zapier vs. custom integrations. Zapier limits you to triggers a
 
 ---
 
+## What Micro-Apps Can and Cannot Do
+
+This section sets clear expectations about the capabilities and boundaries of the micro-app system.
+
+### What Micro-Apps CAN Do
+
+| Capability | Decommerce Examples |
+|------------|---------------------|
+| **Fetch platform data** | Users with completed missions, active room members, Shopify order history, XP leaderboards |
+| **Send communications** | Mission completion congratulations, streak expiring warnings, reward available alerts |
+| **Create content** | Auto-post mission announcements, weekly leaderboard updates, campaign kickoff posts |
+| **Update records** | Award XP on mission completion, update engagement scores, flag posts for review |
+| **Use AI** | Generate personalized mission recommendations, analyze post quality, create celebration messages |
+| **Run on schedules** | Daily streak reminders, weekly XP digests, monthly campaign reports |
+| **React to events** | On mission.completed → award bonus XP; on shopify.order.created → create welcome mission |
+| **Loop over items** | Process up to 5,000 users for mass XP awards or notification campaigns |
+| **Apply conditions** | Only award badge if user has 1000+ XP and completed 10+ missions |
+| **Display UI widgets** | Mission completion rate chart, top contributors leaderboard, room activity heatmap |
+| **Trigger other apps** | "Mission Completed" app emits event → "Badge Award" app mints NFT badge |
+| **Store app state** | Track last leaderboard snapshot to detect rank changes between runs |
+| **Use pre-built integrations** | Sync new members to Klaviyo, post achievements to Discord, notify via Slack |
+| **Process files (basic)** | Generate PDF certificates for campaign winners, resize user-uploaded images |
+| **Request human approval** | Mass XP adjustment waits for admin approval before executing |
+| **Call external URLs** | Webhooks to external analytics platforms or CRM systems |
+
+### Enhanced Capabilities (Configuration-Based)
+
+These powerful features work through configuration, not custom code:
+
+| Feature | How It Works | Decommerce Example |
+|---------|--------------|-------------------|
+| **UI Widgets** | Select from pre-built widget types, configure data source | "Top 10 Mission Completers This Week" leaderboard on community dashboard |
+| **App Chaining** | Define events apps can emit; other apps listen | "Mission Milestone" app emits event → "NFT Badge Minter" app mints celebratory badge |
+| **State Storage** | Key-value store per app for persistence | Track "last_leaderboard_positions" to detect when users climb or drop ranks |
+| **Approval Queues** | Action pauses at approval step until admin approves | Mass XP adjustment (10,000+ XP) waits for admin approval before executing |
+| **Compensating Actions** | Define "undo" action if later steps fail | If NFT mint fails, revert XP award and notify admin |
+| **Pre-built Integrations** | Platform provides connectors for popular services | Sync new community members to Klaviyo list automatically |
+| **Template-based Files** | Generate documents from templates | PDF certificate for campaign winners with XP stats and badges earned |
+
+### How Enhanced Capabilities Work
+
+#### State Storage
+- **Actions**: `set_state` (save value), `get_state` (retrieve value), `delete_state` (remove key)
+- **Scope**: Per-app key-value store (isolated per app)
+- **Limits**: 100 keys per app, 10KB max per value
+- **Use cases**:
+  - Store "last_leaderboard_positions" to detect when users climb or drop ranks
+  - Track "processed_mission_ids" to avoid duplicate notifications
+  - Save "streak_reminder_sent" to prevent multiple reminders per day
+
+#### Approval Queues
+
+<pre>
+┌─────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
+│   App   │───▶│  Execution  │───▶│   request_   │───▶│   PAUSED    │
+│ Trigger │    │   starts    │    │   approval   │    │  (waiting)  │
+└─────────┘    └─────────────┘    └──────────────┘    └──────┬──────┘
+                                                              │
+                                         ┌────────────────────┼────────────────────┐
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │   APPROVE   │      │   REJECT    │      │   TIMEOUT   │
+                                  │ (continue)  │      │  (cancel)   │      │ (7 days)    │
+                                  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘
+                                         │                    │                    │
+                                         ▼                    ▼                    ▼
+                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+                                  │  Continue   │      │   Execution │      │   Execution │
+                                  │  execution  │      │   cancelled │      │   cancelled │
+                                  └─────────────┘      └─────────────┘      └─────────────┘
+</pre>
+
+- **Action**: `request_approval` pauses execution
+- **Admin sees**: Pending approval in Apps UI with action preview
+- **Options**: Approve (continue), Reject (cancel), Modify (edit pending action)
+- **Timeout**: 7 days, then auto-cancel
+
+#### App Chaining (Event Emission)
+
+<pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                         TENANT SCOPE                                 │
+│                                                                     │
+│  ┌─────────────┐         emit_event          ┌─────────────┐       │
+│  │    APP A    │────────────────────────────▶│  Event Bus  │       │
+│  │ "Mission    │   "milestone_reached"       │             │       │
+│  │  Tracker"   │                             └──────┬──────┘       │
+│  └─────────────┘                                    │              │
+│                                                     │ matches      │
+│                          ┌──────────────────────────┼──────────────┐
+│                          │                          │              │
+│                          ▼                          ▼              │
+│                   ┌─────────────┐           ┌─────────────┐       │
+│                   │    APP B    │           │    APP C    │       │
+│                   │ "NFT Badge  │           │ "Klaviyo    │       │
+│                   │  Minter"    │           │  Sync"      │       │
+│                   └─────────────┘           └─────────────┘       │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+
+- **Action**: `emit_event` with custom event name and payload
+- **Other apps**: Listen via event trigger with matching event name
+- **Scope**: Events are tenant-scoped (cannot cross tenants)
+- **Use cases**:
+  - "Mission Tracker" emits "milestone_reached" → "NFT Badge Minter" mints celebratory badge
+  - "Shopify Order Handler" emits "vip_customer" → "Room Inviter" adds user to exclusive room
+  - "Campaign Ended" emits "winners_selected" → "Prize Distributor" awards rewards
+
+#### Pre-built Integrations
+
+| Integration | Actions Available | Decommerce Use Case |
+|-------------|-------------------|---------------------|
+| Klaviyo | sync_profile, add_to_list, trigger_flow, track_event | Sync community members, trigger email flows on mission completion |
+| Slack | send_message, send_dm | Alert team when VIP customers join, notify on campaign milestones |
+| Discord | send_message, send_embed | Post leaderboard updates, announce new missions |
+| Mailchimp | add_subscriber, update_tags | Segment users by engagement level, tag by badges earned |
+| Twilio | send_sms | Send streak expiring warnings, reward claim confirmations |
+
+#### External Integrations (Native OAuth)
+
+Like WordPress plugins can connect to external services, our micro-apps support native OAuth integrations with popular third-party platforms. We build direct API connections that provide the best user experience—everything stays within the Decommerce admin panel.
+
+**Two tiers of connectivity:**
+
+| Tier | What It Is | Examples |
+|------|------------|----------|
+| **Core Actions** | Platform-built actions for Decommerce operations | award_xp, create_post, send_email, mint_nft_badge |
+| **Native OAuth** | Direct API connections to external services | HubSpot, Google Sheets, Salesforce, Airtable |
+
+**How OAuth integrations work:**
+
+1. Admin goes to Settings → Integrations → Connect [Service]
+2. Admin clicks "Connect" → redirected to service's login (e.g., HubSpot)
+3. Admin authorizes Decommerce to access their account
+4. Platform stores encrypted OAuth tokens securely
+5. Micro-apps can now use actions like `hubspot.create_contact`
+
+**Integration roadmap:**
+
+| Service | Actions | Phase |
+|---------|---------|-------|
+| HubSpot | create_contact, update_contact, add_to_list, update_deal | Phase 2 |
+| Google Sheets | append_row, read_range, update_cell, create_sheet | Phase 2 |
+| Salesforce | create_lead, update_opportunity, sync_contact | Phase 3 |
+| Airtable | create_record, update_record, query_records | Phase 3 |
+| Notion | create_page, update_database, query_database | Phase 3 |
+
+**Why native OAuth (not Zapier/middleware):**
+
+- **Simpler architecture**: One system to manage, not two
+- **Better UX**: Everything in the Decommerce admin panel
+- **No extra cost**: Users don't need additional subscriptions
+- **More control**: We own the integration quality and can optimize for Decommerce use cases
+
+**Integration settings (per tenant):**
+
+Admins manage their connected services in Settings → Integrations:
+- View connected accounts and connection status
+- Disconnect/reconnect services
+- See usage metrics per integration
+- Manage OAuth token refresh
+
+#### UI Widgets
+
+| Widget Type | Description | Decommerce Example |
+|-------------|-------------|-------------------|
+| stat_card | Single metric with label | "Missions Completed Today: 47" |
+| leaderboard | Top N users table | "Top 10 XP Earners This Week" |
+| chart_line | Time series chart | "Daily Active Users (30 days)" |
+| chart_bar | Bar chart | "Missions by Type (Trivia, Hangman, Survey)" |
+| table | Data table with columns | "Recent Reward Claims" |
+| progress_ring | Circular progress indicator | "Campaign Progress: 73% Complete" |
+| activity_feed | Recent events stream | "Live Mission Completions" |
+
+#### File Processing
+
+| Action | Description |
+|--------|-------------|
+| generate_pdf | Create PDF from template + data |
+| resize_image | Resize image to specified dimensions |
+
+**Templates**: Platform provides built-in templates; custom templates can be uploaded via admin panel.
+
+#### Compensating Actions
+- **Definition**: Add `on_failure` block to any action
+- **Behavior**: If the action fails, run the compensating action automatically
+- **Use cases**:
+  - If `mint_nft_badge` fails → revert XP award and notify admin
+  - If `send_email` fails → create in-app notification as fallback
+  - If `create_mission` fails → log error and alert via Slack
+
+### What Micro-Apps CANNOT Do (Hard Limits)
+
+These are architectural boundaries that cannot be overcome through configuration:
+
+| Limitation | Reason |
+|------------|--------|
+| **Write custom code** | Cannot run JavaScript, Python, SQL, or any executable code |
+| **Create new database tables** | Cannot define custom schemas or add columns |
+| **Build custom UI components** | Cannot create new React/Vue components from scratch |
+| **Access external APIs directly** | Must use pre-built platform connectors; no raw HTTP calls |
+| **Run indefinitely** | 5-minute maximum execution timeout per run |
+| **Bypass tenant isolation** | Cannot access data from other tenants |
+| **Operate in real-time** | Apps are triggered (batch), not live/interactive |
+| **Run complex nested logic** | No nested if-else chains beyond 2 levels or recursive functions |
+| **Custom calculations** | Limited to built-in aggregations (sum, avg, count, min, max) |
+
+### Operational limits (target defaults)
+
+These are the “how big/how often” limits we use to keep the runtime predictable. If the runtime/validation layer doesn’t already enforce a value, treat it as a **target default** to implement (not a promise we’re already meeting).
+
+| Area | Limit | Target default | Why it exists | Where enforced |
+|------|-------|----------------|---------------|----------------|
+| **Looping** | Items per loop | 5,000 | Prevent long-running mass operations from starving workers | Validation + runtime stop conditions |
+| **Runtime** | Execution timeout per run | 5 minutes | Keep executions bounded; avoid “stuck” apps | Runtime watchdog/timeout |
+| **AI** | AI calls per execution | 500 | Control cost/latency and provider pressure | Runtime counters + provider limits |
+| **Email** | Emails per execution | 2,000 | Prevent accidental spam blasts; protect deliverability | Action executor + quota gates |
+| **Tenant capacity** | Apps per tenant | 100 | Keep the system operable; encourage archiving | Validation + plan/tier limits |
+| **Scheduling** | Minimum interval | 1 minute | Avoid “near-real-time” expectations; protect scheduler | Scheduler validation |
+| **Scheduling** | Single timezone per scheduled app | 1 timezone | Simpler mental model; fewer edge cases | Trigger config validation |
+| **Scheduling** | Business-day logic (skip weekends/holidays) | Not supported | Avoid hidden complexity in v1 | Product limitation (explicit) |
+
+### Data access & security boundaries
+
+This is the “what you can touch” boundary. We keep it explicit because it’s the main safety guarantee for tenant trust.
+
+| Boundary | What it means in practice | Where enforced |
+|----------|----------------------------|----------------|
+| **Read via connectors only** | No raw SQL / arbitrary queries; only approved datasets with allowed filters | Connector layer |
+| **Write via actions only** | All side effects go through typed actions (auditable, validateable) | Action executor |
+| **Tenant isolation** | App can only access the current tenant’s data and events | Request context + data layer |
+| **Current data only** | No historical “as-of” snapshots unless platform already stores them | Connector layer |
+| **No stored secrets** | Micro-app configs don’t store API keys; integrations use tenant-managed settings | Settings/integration layer |
+| **Webhook allowlist** | Webhooks can only target approved domains | Webhook executor |
+| **No code execution** | No JS/Python/SQL snippets inside configs | Config validation |
+| **No internal network access** | Block localhost, private IPs, metadata endpoints, redirects to them | Webhook executor |
+
+### When to Request a Core Platform Feature
+
+Contact the development team only if you need:
+
+- **New game mechanics** not in the catalog (e.g., slot machine, scratch cards, poker)
+- **New token/chain integrations** beyond supported chains (ETH, MATIC, BNB, Polygon)
+- **Custom NFT contract deployment** for unique badge mechanics or special minting rules
+- **Real-time interactive features** like live chat, collaborative games, or live streaming
+- **Processing 100K+ items** in a single operation (split into smaller batches if possible)
+- **Custom analytics dashboards** beyond the widget capabilities
+- **New Shopify webhook types** not yet mapped to platform events
+- **Custom reward calculation formulas** beyond standard XP/token awards
+- **Third-party integrations** not yet supported (e.g., specific CRM, payment provider)
+
+---
+
 ## Why MCP + Micro-Apps?
 
-### Zapier vs MCP vs Micro-Apps
+### Zapier vs MCP vs MCP + Micro-Apps
 
 | Aspect | Zapier | MCP (External) | MCP + Micro-Apps |
 |--------|--------|----------------|------------------|
-| **User** | Business users | Developers with AI tools | Tenant admins |
-| **Interface** | Zapier UI | Claude Desktop/ChatGPT | Admin panel chatbox |
-| **Creates** | Zaps (trigger → action) | One-off operations | Persistent apps |
-| **Intelligence** | None | AI-powered | AI-powered |
-| **Runs** | On Zapier's servers | On-demand | On Decommerce servers |
+| User | Business users | Developers with AI tools | Tenant admins |
+| Interface | Zapier UI | Claude Desktop / ChatGPT | Decommerce admin panel chatbox |
+| Creates | Zaps (trigger → action) | One-off operations | Persistent apps |
+| Intelligence | None | AI-powered | AI-powered |
+| Runs | Zapier servers | On-demand | Decommerce servers |
 
-### Key Benefits
+### Key benefits
 
-1. **No-Code App Creation** — Admins describe apps in plain English
-2. **AI-Powered** — Apps can use AI for content generation, analysis, decisions
-3. **Persistent Automation** — Apps run continuously (scheduled, event-driven)
-4. **Platform Differentiator** — No other community platform offers this
+- **No-code app creation**: admins describe what they want.
+- **AI-powered**: apps can incorporate AI analysis/generation steps.
+- **Provider choice**: admins pick their preferred AI (Claude, ChatGPT, Gemini)—no vendor lock-in.
+- **Persistent automation**: runs continuously on events/schedules.
+- **Platform differentiation**: a unique, AI-native automation layer.
 
-### What Apps Can Be Created?
+### What apps can be created?
 
-| Category | Examples | Count |
-|----------|----------|-------|
-| Email/Communication | Weekly digests, win-back campaigns, welcome series | 7+ |
-| Content Automation | AI blog posts, welcome posts, recaps | 6+ |
-| Engagement/Gamification | Campaigns, leaderboards, streaks | 6+ |
-| Analytics/Reporting | Admin reports, churn alerts, performance reports | 6+ |
-| Moderation/Management | Post detection, cleanup, scoring | 5+ |
-| Shopify Integration | Thank you posts, VIP rewards, review requests | 5+ |
-| **Total** | | **35+** |
+The catalog includes 35+ examples across:
+- Email/communication
+- Content automation
+- Engagement/gamification
+- Analytics/reporting
+- Moderation/management
+- Shopify integration
 
 ---
 
 ## System Architecture
 
-### High-Level Architecture
+### High-level architecture
 
-```
+<pre>
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                         ADMIN PANEL (React)                              │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                      AI Chatbox Component                          │  │
-│  │  ┌─────────────────────────────────────────────────────────────┐  │  │
-│  │  │ Admin: "Create an app that sends weekly engagement emails"  │  │  │
-│  │  │                                                              │  │  │
-│  │  │ AI: "I'll create a Weekly Engagement Digest app..."         │  │  │
-│  │  └─────────────────────────────────────────────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                      Apps Management UI                            │  │
-│  │  [Weekly Digest ✓] [Post Detector ✓] [Welcome Series ○]           │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  - AI Chatbox (streaming conversation)                                  │
+│  - Provider selector (Claude / ChatGPT / Gemini / etc.)                 │
+│  - App Confirmation (optional "approve tool action?" gate)              │
+│  - Apps Management UI (list / details / logs / run / pause / resume)    │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                      DECOMMERCE BACKEND (NestJS)                         │
-│                                                                          │
-│  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────────┐   │
-│  │   MCP Server    │   │  App Framework  │   │   AI Service        │   │
-│  │                 │   │                 │   │   (Claude API)      │   │
-│  │  Tools:         │   │  - App Storage  │   │                     │   │
-│  │  - create_app   │──▶│  - Triggers     │◀──│  - Content Gen      │   │
-│  │  - list_apps    │   │  - Connectors   │   │  - Analysis         │   │
-│  │  - run_app      │   │  - Actions      │   │  - Decisions        │   │
-│  │  - delete_app   │   │  - Scheduler    │   │                     │   │
-│  └─────────────────┘   └─────────────────┘   └─────────────────────┘   │
-│                                    │                                     │
-│                                    ▼                                     │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                    Existing Decommerce Services                    │  │
-│  │  [Users] [Rooms] [Posts] [Missions] [Rewards] [Shopify] [Email]   │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                    │                                     │
-│                                    ▼                                     │
-│  ┌───────────────────────────────────────────────────────────────────┐  │
-│  │                    Tenant Database (PostgreSQL)                    │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    AI Provider Abstraction                       │   │
+│  │   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐    │   │
+│  │   │  Claude  │   │  OpenAI  │   │  Gemini  │   │  Future  │    │   │
+│  │   │  Adapter │   │  Adapter │   │  Adapter │   │ Providers│    │   │
+│  │   └──────────┘   └──────────┘   └──────────┘   └──────────┘    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│           │                                                             │
+│           ▼                                                             │
+│  ┌─────────────────┐   ┌─────────────────┐                             │
+│  │   MCP Server    │   │  App Framework  │                             │
+│  │ (tools/resources)│  │ (runtime engine)│                             │
+│  └─────────────────┘   └─────────────────┘                             │
+│           │                     │                                       │
+│           └───────────────┬─────┘                                       │
+│                           ▼                                             │
+│        Existing Decommerce Services        Tenant DB (PostgreSQL)       │
+│     (Users/Rooms/Posts/Missions/etc.)   (apps, executions, logs, data)  │
 └─────────────────────────────────────────────────────────────────────────┘
-```
+</pre>
 
-### Request Flow: Creating an App
+### Why provider choice matters
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│  Admin   │     │  Admin   │     │  Claude  │     │   MCP    │     │   App    │
-│  Panel   │     │  Backend │     │   API    │     │  Server  │     │Framework │
-└────┬─────┘     └────┬─────┘     └────┬─────┘     └────┬─────┘     └────┬─────┘
-     │                │                │                │                │
-     │ "Create weekly │                │                │                │
-     │  email app"    │                │                │                │
-     │───────────────▶│                │                │                │
-     │                │                │                │                │
-     │                │  Send to Claude│                │                │
-     │                │  with MCP tools│                │                │
-     │                │───────────────▶│                │                │
-     │                │                │                │                │
-     │                │                │  AI decides to │                │
-     │                │                │  call create_app                │
-     │                │                │───────────────▶│                │
-     │                │                │                │                │
-     │                │                │                │  Validate +    │
-     │                │                │                │  Store config  │
-     │                │                │                │───────────────▶│
-     │                │                │                │                │
-     │                │                │                │  { success }   │
-     │                │                │                │◀───────────────│
-     │                │                │                │                │
-     │                │                │  { app created}│                │
-     │                │                │◀───────────────│                │
-     │                │                │                │                │
-     │                │  "App created!"│                │                │
-     │                │◀───────────────│                │                │
-     │                │                │                │                │
-     │ "✓ Weekly      │                │                │                │
-     │  Digest created"                │                │                │
-     │◀───────────────│                │                │                │
-```
+We're not locking into a single AI vendor. Admins can pick whichever provider they prefer (or already have API access to). The system works the same regardless of which AI is doing the thinking—Claude, ChatGPT, Gemini, or whatever comes next.
 
-### Request Flow: App Execution
+This works because:
+- **The MCP tools are the constant.** The same `create_app`, `list_users`, `award_xp` tools work identically no matter which AI calls them.
+- **Each provider adapter translates formats.** Claude uses "tool_use", OpenAI uses "function calling", Gemini has its own format—the adapter handles the translation.
+- **The output is always a structured config.** Whichever AI generates the app configuration, the App Framework validates and runs it the same way.
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-│Scheduler │     │   App    │     │  Data    │     │  Claude  │     │  Action  │
-│ (Cron)   │     │Framework │     │Connectors│     │   API    │     │Executors │
-└────┬─────┘     └────┬─────┘     └────┬─────┘     └────┬─────┘     └────┬─────┘
-     │                │                │                │                │
-     │ Trigger:       │                │                │                │
-     │ Monday 9am     │                │                │                │
-     │───────────────▶│                │                │                │
-     │                │                │                │                │
-     │                │ Load app config│                │                │
-     │                │ "Weekly Digest"│                │                │
-     │                │                │                │                │
-     │                │ Fetch users    │                │                │
-     │                │───────────────▶│                │                │
-     │                │                │                │                │
-     │                │  [1000 users]  │                │                │
-     │                │◀───────────────│                │                │
-     │                │                │                │                │
-     │                │ Fetch engagement                │                │
-     │                │───────────────▶│                │                │
-     │                │                │                │                │
-     │                │  [user stats]  │                │                │
-     │                │◀───────────────│                │                │
-     │                │                │                │                │
-     │                │ For each user: │                │                │
-     │                │ Generate email │                │                │
-     │                │───────────────────────────────▶│                │
-     │                │                │                │                │
-     │                │                │  [email body]  │                │
-     │                │◀───────────────────────────────│                │
-     │                │                │                │                │
-     │                │ Send email     │                │                │
-     │                │───────────────────────────────────────────────▶│
-     │                │                │                │                │
-     │                │                │                │     { sent }   │
-     │                │◀───────────────────────────────────────────────│
-```
+Tenant admins can configure their preferred provider in settings. Some might use Claude for its reasoning, others ChatGPT for familiarity, others Gemini because their org already has a Google Cloud relationship. The point is: it's their choice.
+
+- **Admin Panel (React)**
+  - AI chatbox for "describe an app" interactions
+  - Provider selector (choose Claude, ChatGPT, Gemini, etc.)
+  - Apps management UI (list, details, logs, pause/resume, run)
+- **Decommerce Backend (NestJS)**
+  - AI Provider Abstraction (adapters for each supported AI)
+  - MCP Server (tools AI can call)
+  - App Framework (storage, triggers, execution, monitoring)
+- **Existing Decommerce services**
+  - Users, Rooms, Posts, Missions, Rewards, Shopify, Email/Notifications
+- **Tenant database (PostgreSQL)**
+  - Stores apps, executions, logs, and tenant-scoped business data.
+
+### Request flow: creating an app
+
+<pre>
+┌──────────┐   ┌───────────────┐   ┌──────────────┐   ┌──────────────┐   ┌───────────────┐
+│  Admin   │   │ Admin Backend │   │ AI Provider  │   │  MCP Server   │   │ App Framework │
+│  Panel   │   │   (NestJS)    │   │ (chosen one) │   │ (tool layer)  │   │ (store+rules) │
+└────┬─────┘   └──────┬────────┘   └──────┬───────┘   └──────┬───────┘   └──────┬────────┘
+     │                 │                   │                  │                  │
+     │ "Create app …"  │                   │                  │                  │
+     │ + provider pref │                   │                  │                  │
+     ├────────────────▶│                   │                  │                  │
+     │                 │  chat+tools list  │                  │                  │
+     │                 │  (adapted format) │                  │                  │
+     │                 ├──────────────────▶│                  │                  │
+     │                 │                   │ decides to use   │                  │
+     │                 │                   │ create_app tool  │                  │
+     │                 │                   ├─────────────────▶│                  │
+     │                 │                   │                  │ validate+store   │
+     │                 │                   │                  ├─────────────────▶│
+     │                 │                   │                  │  result (ok/err) │
+     │                 │                   │◀─────────────────┤                  │
+     │      streamed response back to UI (and app appears in list if created)    │
+     │◀─────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+1. Admin sends a natural-language request from the chatbox UI. Their provider preference (Claude, ChatGPT, Gemini) travels with the request.
+2. Backend picks the right adapter and forwards the request to the chosen AI provider with:
+   - a system instruction (tenant context, allowed tools),
+   - a tool list (formatted for that specific provider),
+   - and streaming enabled for a good UX.
+3. AI decides whether it needs clarifications or is ready to propose a full app.
+4. If ready, AI uses an MCP tool to create/store the app configuration.
+5. Backend returns success and the new app appears in the admin UI.
+
+The admin doesn't need to care about format differences between providers. The backend handles the translation—same request, same result, different AI brain.
+
+### Request flow: app execution
+
+<pre>
+┌───────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ Trigger   │   │ App Framework │   │  Connectors  │   │   Actions    │
+│ (cron/event│  │ (load+execute)│   │  (read data) │   │ (side effects)│
+└─────┬─────┘   └──────┬───────┘   └──────┬───────┘   └──────┬───────┘
+      │                 │                  │                  │
+      │ fires            │                  │                  │
+      ├────────────────▶│ load app config   │                  │
+      │                 ├──────────────────▶│ fetch pipeline    │
+      │                 │◀──────────────────┤ results           │
+      │                 │ (optional transforms)                  │
+      │                 ├───────────────────────────────────────▶│ run actions
+      │                 │◀───────────────────────────────────────┤ results/errors
+      │                 │ log execution + update counters/status │
+</pre>
+
+1. A trigger fires (scheduled time, event emitted, or manual run).
+2. App Framework loads the app configuration from storage.
+3. It runs the **data pipeline** (connectors + optional transformations).
+4. It runs the **actions** (including possible AI calls).
+5. It logs execution results for audit/debugging and updates status counters.
 
 ---
 
+At this point we’re out of “what” and into “how the pieces work together”. The rest of the doc breaks the system into three parts that match how we’ll ship it: the MCP surface (tools/resources), the runtime (store + execute), and the admin UI (chat + control plane).
+
 ## Part 1: MCP Server
 
-The MCP Server exposes tools that AI can call to interact with Decommerce.
+The MCP Server will expose **tool endpoints** and **resources** an AI agent can use to interact with Decommerce safely (and predictably). The MCP layer is where we plan to enforce tenant context, auth, and coarse-grained read/write policy before anything touches business data.
 
-### MCP Server Module Structure
+### MCP module responsibilities (responsibilities, not implementation detail)
 
-<details>
-<summary>View MCP Server Module Structure</summary>
+- Accept MCP requests via HTTP transport.
+- Authenticate requests (e.g., API key or tenant-scoped secret).
+- Apply rate limiting for read vs write operations.
+- Establish per-request tenant context (so every tool call is tenant-scoped).
+- Register tools by domain: apps, users, rooms, posts, missions, rewards, notifications, analytics.
+- Expose resources (documentation-like endpoints) such as:
+  - platform schema overview,
+  - available app templates/building blocks,
+  - platform enums and event names.
 
-```
-src/mcp/
-├── mcp.module.ts                    # NestJS module
-├── mcp.controller.ts                # HTTP endpoints for MCP transport
-├── mcp-server.factory.ts            # Creates MCP Server instance
-├── mcp-context.service.ts           # Per-request tenant context
-│
-├── auth/
-│   └── mcp-api-key.guard.ts         # API key validation
-│
-├── tools/
-│   ├── index.ts                     # Registers all tools
-│   ├── apps.tools.ts                # create_app, list_apps, update_app, delete_app, run_app
-│   ├── users.tools.ts               # list_users, get_user, etc.
-│   ├── rooms.tools.ts               # list_rooms, get_room, etc.
-│   ├── posts.tools.ts               # list_posts, create_post, etc.
-│   ├── missions.tools.ts            # list_missions, create_mission, etc.
-│   ├── rewards.tools.ts             # list_contributions, etc.
-│   ├── notifications.tools.ts       # send_notification
-│   └── analytics.tools.ts           # get_stats, get_metrics
-│
-├── resources/
-│   ├── index.ts
-│   ├── platform-schema.resource.ts  # Entity documentation
-│   ├── app-templates.resource.ts    # Available app building blocks
-│   └── enums.resource.ts            # Platform enums
-│
-└── guards/
-    └── mcp-rate-limit.guard.ts
-```
+### MCP tools for app management
 
-</details>
+**Proposed v1 scope (starting set):**
+- `create_app`, `list_apps`, `get_app`, `update_app`, `delete_app`
+- `run_app`, `pause_app`, `resume_app`
+- `get_app_logs`
 
-### MCP Tools for App Management
+| Tool | Purpose |
+|------|---------|
+| create_app | Create a micro-app by saving an app configuration |
+| list_apps | List apps for the current tenant (filterable) |
+| get_app | Fetch one app plus run history |
+| update_app | Update app configuration or metadata (versioned) |
+| delete_app | Delete an app |
+| run_app | Manually trigger an app execution |
+| pause_app | Pause an app |
+| resume_app | Resume a paused app |
+| get_app_logs | Fetch recent execution logs |
 
-| Tool | Description | Input |
-|------|-------------|-------|
-| `create_app` | Create a new micro-app | `{ name, description, trigger, data_pipeline, actions }` |
-| `list_apps` | List all apps for this tenant | `{ status?, limit?, offset? }` |
-| `get_app` | Get app details and run history | `{ app_id }` |
-| `update_app` | Update app configuration | `{ app_id, ...updates }` |
-| `delete_app` | Delete an app | `{ app_id }` |
-| `run_app` | Manually trigger an app | `{ app_id }` |
-| `pause_app` | Pause an app | `{ app_id }` |
-| `resume_app` | Resume a paused app | `{ app_id }` |
-| `get_app_logs` | Get execution logs | `{ app_id, limit? }` |
+### MCP tools for data access
 
-### MCP Tools for Data Access
-
-| Tool | Description |
-|------|-------------|
-| `list_users` | List users with filters |
-| `get_user` | Get user profile + stats |
-| `list_rooms` | List rooms |
-| `get_room` | Get room details |
-| `list_posts` | List posts with filters |
-| `create_post` | Create a post |
-| `list_missions` | List missions |
-| `create_mission` | Create a mission |
-| `list_contributions` | List reward contributions |
-| `get_community_stats` | Get overview stats |
-| `get_engagement_metrics` | Get engagement over time |
-| `send_notification` | Send push/email notification |
+These are tenant-scoped tools for listing/fetching core entities and metrics. We should start narrow and expand as we learn what admins actually automate most:
+- list/get users
+- list/get rooms
+- list/create posts (where appropriate)
+- list/create missions
+- list contributions/rewards data
+- fetch community stats and engagement metrics
+- send notifications (to admins or users)
 
 ---
 
 ## Part 2: App Framework
 
-The App Framework is the **runtime engine** that stores, schedules, executes, and monitors micro-apps. While the MCP Server lets AI create apps, the App Framework is what actually runs them.
-
-### What the App Framework Does
-
-Think of the App Framework as a **workflow automation engine** with four core responsibilities:
-
-1. **Storage** — Saves app configurations as JSON in the database (not code)
-2. **Triggering** — Knows when to run each app (scheduled time, event fired, manual click)
-3. **Execution** — Runs the app's data pipeline and actions
-4. **Monitoring** — Logs every execution for debugging and auditing
-
-### The Building Blocks Concept
-
-Apps are built from **three types of building blocks** that AI combines:
-
-| Building Block | What It Does | Examples |
-|----------------|--------------|----------|
-| **Connectors** | Fetch data from the platform | Get users, get posts, get Shopify orders |
-| **Actions** | Do something with the data | Send email, create post, award XP, flag content |
-| **Triggers** | Decide when the app runs | Every Monday 9am, when post is created, when admin clicks Run |
-
-**The key insight:** AI doesn't write code — it assembles these pre-built blocks into a configuration. The framework then executes that configuration safely and predictably.
-
-### How an App Executes
-
-When an app runs (triggered by schedule, event, or manual click), here's what happens:
-
-```
-1. TRIGGER fires (e.g., Monday 9am)
-         ↓
-2. Load app configuration from database
-         ↓
-3. DATA PIPELINE runs:
-   - Connector 1: Fetch active users → [1000 users]
-   - Connector 2: Fetch engagement stats → [user stats]
-   - Connector 3: Fetch Shopify orders → [recent orders]
-   - Merge/filter/transform data as needed
-         ↓
-4. ACTIONS execute:
-   - For each user:
-     - AI generates personalized email content
-     - Send email via SendGrid
-         ↓
-5. LOG execution results (success/failure, items processed, errors)
-```
-
-### Why Configuration-Based Apps Matter
-
-| Approach | Risk | Benefit |
-|----------|------|---------|
-| AI writes actual code | High — code could do anything | Maximum flexibility |
-| AI generates configuration | Low — framework controls what's possible | Safe, predictable, auditable |
-
-We chose **configuration-based apps** because:
-- AI can only use pre-built connectors and actions (no arbitrary code execution)
-- Every app is inspectable — admins can see exactly what it does
-- Execution is sandboxed — apps can't access anything outside defined connectors
-- Easy to pause, modify, or delete without code changes
-
-### App Framework Module Structure
-
-<details>
-<summary>View App Framework Module Structure</summary>
-
-```
-src/app-framework/
-├── app-framework.module.ts          # NestJS module
-│
-├── entities/
-│   ├── app.entity.ts                # App configuration storage
-│   ├── app-execution.entity.ts      # Execution history
-│   └── app-log.entity.ts            # Detailed logs
-│
-├── services/
-│   ├── app.service.ts               # CRUD operations for apps
-│   ├── app-executor.service.ts      # Runs app logic
-│   ├── app-scheduler.service.ts     # Cron/scheduled triggers
-│   └── app-event-listener.service.ts # Event-based triggers
-│
-├── connectors/                      # Data source connectors
-│   ├── connector.interface.ts       # Base interface
-│   ├── users.connector.ts           # Fetch user data
-│   ├── engagement.connector.ts      # Fetch engagement metrics
-│   ├── posts.connector.ts           # Fetch posts
-│   ├── rooms.connector.ts           # Fetch rooms
-│   ├── missions.connector.ts        # Fetch missions
-│   ├── rewards.connector.ts         # Fetch rewards/contributions
-│   ├── shopify.connector.ts         # Fetch Shopify orders
-│   └── analytics.connector.ts       # Fetch aggregated stats
-│
-├── actions/                         # Action executors
-│   ├── action.interface.ts          # Base interface
-│   ├── send-email.action.ts         # Send email via SendGrid
-│   ├── create-post.action.ts        # Create a post
-│   ├── send-notification.action.ts  # Push notification
-│   ├── update-user.action.ts        # Update user fields
-│   ├── create-mission.action.ts     # Create a mission
-│   ├── award-xp.action.ts           # Give XP to users
-│   ├── flag-content.action.ts       # Flag post for review
-│   └── webhook.action.ts            # Call external URL
-│
-├── logic/                           # Data transformation
-│   ├── filter.logic.ts              # Filter data
-│   ├── sort.logic.ts                # Sort data
-│   ├── group.logic.ts               # Group data
-│   ├── aggregate.logic.ts           # Sum, count, average
-│   ├── merge.logic.ts               # Combine data sources
-│   └── ai-generate.logic.ts         # AI content generation
-│
-├── triggers/                        # Trigger types
-│   ├── trigger.interface.ts         # Base interface
-│   ├── scheduled.trigger.ts         # Cron-based
-│   ├── event.trigger.ts             # On user signup, post created, etc.
-│   └── manual.trigger.ts            # Admin clicks "Run"
-│
-└── dto/
-    ├── app-config.dto.ts            # App configuration schema
-    └── execution-result.dto.ts      # Execution result format
-```
-
-</details>
-
-### Understanding the Components
-
-#### Services (The Brain)
-
-| Service | Responsibility |
-|---------|----------------|
-| `app.service.ts` | CRUD operations — create, read, update, delete apps |
-| `app-executor.service.ts` | The execution engine — runs data pipeline → actions in sequence |
-| `app-scheduler.service.ts` | Manages cron jobs — loads scheduled apps on startup, creates/removes jobs |
-| `app-event-listener.service.ts` | Listens to platform events (user.created, post.created) and triggers matching apps |
-
-#### Connectors (Data In)
-
-Connectors are **read-only data sources**. Each connector knows how to fetch one type of data with filters:
-
-| Connector | What It Fetches | Example Filters |
-|-----------|-----------------|-----------------|
-| `users` | User records | status=Active, created_after=7d ago |
-| `user_engagement` | Calculated stats | XP this week, posts count, missions completed |
-| `posts` | Post records | room_id=5, status=Published |
-| `rooms` | Room records | room_type_id=3 |
-| `missions` | Mission records | is_active=true, mission_type=Quiz |
-| `shopify_orders` | Shopify order data | created_after=7d ago, total_gte=100 |
-| `analytics` | Aggregated metrics | Period=last_30_days |
-
-**Why separate connectors?** Each connector handles its own query logic, validation, and error handling. AI just specifies which connector to use and what filters to apply.
-
-#### Actions (Data Out)
-
-Actions are **operations that change state**. Each action knows how to do one thing:
-
-| Action | What It Does | Required Params |
-|--------|--------------|-----------------|
-| `send_email` | Send email via SendGrid | to, subject, body |
-| `create_post` | Create a post in a room | room_id, content, author_id |
-| `send_notification` | Push notification to users | user_ids, title, message |
-| `update_user` | Update user fields | user_id, fields |
-| `award_xp` | Give XP to a user | user_id, amount, reason |
-| `flag_content` | Flag post for review | content_id, reason |
-| `ai_generate` | Generate content using Claude | prompt, output_var |
-| `ai_analyze` | Analyze content using Claude | input, prompt, output_var |
-| `for_each` | Loop over items and run nested actions | items, as, do |
-| `webhook` | Call external URL | url, method, body |
-
-**Why separate actions?** Each action handles validation, error handling, and rollback. The executor just calls actions in sequence.
-
-#### Triggers (When to Run)
-
-| Trigger Type | How It Works | Use Case |
-|--------------|--------------|----------|
-| `scheduled` | Cron job runs at specified time | Weekly digest every Monday 9am |
-| `event` | Platform emits event, listener checks for matching apps | Moderate new posts, welcome new users |
-| `manual` | Admin clicks "Run" button | One-time reports, testing |
-
-### Database Schema
-
-The App Framework uses two main tables to store apps and track their execution history.
-
-#### App Entity
-
-The `apps` table stores the app configuration and status. Each row is one micro-app.
-
-**Key fields:**
-- `tenant_id` — Tenant identifier for multi-tenant isolation. Each tenant only sees their own apps.
-- `config` (JSONB) — The full app configuration: trigger, data pipeline, actions. This is what AI generates.
-- `status` — ACTIVE (running), PAUSED (stopped), or ERROR (failed too many times)
-- `version` — App version for tracking changes and supporting rollback
-- `created_by` — Admin user who created the app (for audit and permissions)
-- `run_count` / `error_count` — Execution statistics for monitoring
-- `last_run_at` — When the app last executed (for debugging)
-
-<details>
-<summary>View App Entity Code</summary>
-
-```typescript
-@Entity('apps')
-export class App extends EntityHelper {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @Column()
-  tenant_id: string;  // Multi-tenant isolation - CRITICAL for security
-
-  @Column()
-  name: string;
-
-  @Column({ type: 'text', nullable: true })
-  description: string;
-
-  @Column({ type: 'jsonb' })
-  config: AppConfig;  // Full app configuration
-
-  @Column({ type: 'int', default: 1 })
-  version: number;  // Incremented on each update
-
-  @Column({ type: 'jsonb', nullable: true })
-  previous_configs: AppConfig[];  // Version history for rollback (last 5 versions)
-
-  @Column({ type: 'enum', enum: AppStatus, default: AppStatus.ACTIVE })
-  status: AppStatus;  // ACTIVE, PAUSED, ERROR
-
-  @Column()
-  created_by: number;  // Admin user ID who created this app
-
-  @Column({ nullable: true })
-  updated_by: number;  // Admin user ID who last modified this app
-
-  @Column({ type: 'timestamp', nullable: true })
-  last_run_at: Date;
-
-  @Column({ type: 'int', default: 0 })
-  run_count: number;
-
-  @Column({ type: 'int', default: 0 })
-  error_count: number;
-
-  @Column({ type: 'int', default: 0 })
-  consecutive_errors: number;  // Reset on success, used for auto-pause
-
-  @CreateDateColumn()
-  created_at: Date;
-
-  @UpdateDateColumn()
-  updated_at: Date;
-}
-
-// All queries MUST include tenant_id to ensure multi-tenant isolation
-// Example: appRepository.find({ where: { tenant_id: currentTenantId } })
-```
-
-</details>
-
-#### App Execution Entity
-
-The `app_executions` table logs every time an app runs. This provides:
-- **Audit trail** — See exactly when each app ran and what it did
-- **Debugging** — If something fails, check the error message and result
-- **Monitoring** — Track success rates, processing times, items handled
-
-<details>
-<summary>View App Execution Entity Code</summary>
-
-```typescript
-@Entity('app_executions')
-export class AppExecution extends EntityHelper {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @ManyToOne(() => App)
-  app: App;
-
-  @Column({ type: 'enum', enum: ExecutionStatus })
-  status: ExecutionStatus;  // RUNNING, SUCCESS, FAILED
-
-  @Column({ type: 'timestamp' })
-  started_at: Date;
-
-  @Column({ type: 'timestamp', nullable: true })
-  completed_at: Date;
-
-  @Column({ type: 'int', nullable: true })
-  items_processed: number;
-
-  @Column({ type: 'jsonb', nullable: true })
-  result: any;
-
-  @Column({ type: 'text', nullable: true })
-  error_message: string;
-}
-```
-
-</details>
+The App Framework will be the runtime engine that stores, validates, schedules, executes, and monitors micro-apps. If MCP is the “hands” an agent can use, the framework is the “operating system” that makes those hands safe at scale.
+
+### What the App Framework does
+
+1. **Storage**: saves app configurations (as data) in the database.
+2. **Triggering**: decides when to run apps (scheduled/event/manual/delayed).
+3. **Execution**: runs data pipeline and actions in order.
+4. **Monitoring**: logs every execution for audit and debugging.
+
+### Building blocks
+
+Apps are assembled from three building block types:
+
+| Building block | Purpose | Examples |
+|---|---|---|
+| Connectors | Fetch data | users, posts, missions, shopify orders |
+| Actions | Produce side effects | send email, create post, award XP, flag content |
+| Triggers | Decide when to run | cron schedule, platform event, manual run |
+
+#### Building Blocks Relationship
+
+<pre>
+┌─────────────────────────────────────────────────────────────────────┐
+│                         MICRO-APP                                    │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                        TRIGGER                               │   │
+│  │    (scheduled | event | manual | delayed)                    │   │
+│  │                                                              │   │
+│  │    "WHEN should this app run?"                               │   │
+│  └──────────────────────────┬──────────────────────────────────┘   │
+│                              │ fires                                │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                      CONNECTORS                              │   │
+│  │    (users | posts | orders | metrics | ...)                  │   │
+│  │                                                              │   │
+│  │    "WHAT data does this app need?"                           │   │
+│  └──────────────────────────┬──────────────────────────────────┘   │
+│                              │ provides data                        │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                       ACTIONS                                │   │
+│  │    (send_email | create_post | award_xp | ai_generate | ...) │   │
+│  │                                                              │   │
+│  │    "WHAT should this app do with the data?"                  │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+</pre>
+
+### Why configuration-based apps
+
+Generating configurations instead of arbitrary code is safer because:
+- AI is constrained to approved connectors/actions.
+- Every app is inspectable and auditable.
+- The runtime can enforce limits and security consistently.
+- Apps are easy to pause/modify/delete without redeploying code.
+
+### Core stored entities (described)
+
+- **App**
+  - tenant identifier (required for isolation)
+  - name/description
+  - configuration payload (the full app definition)
+  - status (active/paused/error)
+  - versioning (current version + recent history)
+  - counters and timestamps (run/error counts, last run, consecutive errors)
+  - created_by / updated_by for audit
+
+- **App Execution**
+  - linked app reference
+  - status (running/success/failed)
+  - start/end timestamps
+  - items processed
+  - result payload and/or error message
+
+### App Lifecycle States
+
+<pre>
+                    ┌─────────────────────────────────────────┐
+                    │                                         │
+                    ▼                                         │
+┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐     │
+│  DRAFT  │───▶│ ACTIVE  │───▶│ PAUSED  │───▶│ ACTIVE  │     │
+└─────────┘    └────┬────┘    └────┬────┘    └─────────┘     │
+     │              │              │                          │
+     │              ▼              │                          │
+     │         ┌─────────┐        │                          │
+     │         │  ERROR  │◀───────┘                          │
+     │         └────┬────┘                                   │
+     │              │                                         │
+     │              ▼                                         │
+     │         ┌─────────┐                                   │
+     └────────▶│ DELETED │◀──────────────────────────────────┘
+               └─────────┘
+
+State Transitions:
+- DRAFT → ACTIVE: Admin enables app
+- ACTIVE → PAUSED: Admin pauses or auto-pause on errors
+- ACTIVE → ERROR: Consecutive failures exceed threshold
+- PAUSED → ACTIVE: Admin resumes
+- ERROR → ACTIVE: Admin fixes and resumes
+- Any → DELETED: Admin deletes app
+</pre>
 
 ---
 
 ## Part 3: Admin Panel AI Chatbox
 
-The AI Chatbox is the **user interface** where admins interact with AI to create and manage micro-apps. It's a React component embedded in the admin panel.
+The admin panel will be the control plane for humans. It will provide:
+- a chat interface to request apps in natural language,
+- a provider selector so admins can choose which AI to use (Claude, ChatGPT, Gemini, etc.),
+- streaming responses (works with all providers),
+- optional confirmation gates for tool execution,
+- and an apps management UI (list/detail/logs/controls).
 
-### How the Chatbox Works
+Provider choice can be set as a default in tenant settings, or switched per conversation. Some admins might prefer Claude for complex reasoning tasks and ChatGPT for quick iterations—that's fine, both produce the same app configuration format.
 
-1. **Admin types a request** in natural language (e.g., "Create an app that sends weekly emails")
-2. **Frontend sends request** to backend API endpoint
-3. **Backend forwards to Claude API** with MCP tools available
-4. **Claude decides what to do** — might call `create_app` tool, or ask clarifying questions
-5. **Response streams back** to the chatbox in real-time
-6. **If app is created**, it appears in the Apps List immediately
+### Endpoints (shape)
 
-### The Conversation Flow
+The backend provides endpoints to:
+- send a chat message and stream AI responses,
+- list conversations and fetch a single conversation,
+- delete conversation history,
+- confirm or reject a pending tool execution when confirmation is required.
 
-```
-Admin: "Create an app that flags low-quality posts"
-                    ↓
-Backend: Sends to Claude with system prompt + MCP tools
-                    ↓
-Claude: Understands intent, generates app config, calls create_app tool
-                    ↓
-MCP Server: Validates config, stores in database
-                    ↓
-Claude: "I've created a Low-Quality Post Detector app. It will..."
-                    ↓
-Frontend: Shows response + new app in list
-```
+### Tool confirmation flow (conceptual)
 
-### Frontend Components
-
-```
-admin-panel/src/
-├── components/
-│   └── ai-apps/
-│       ├── AIChatbox.tsx            # Main chat interface
-│       ├── ChatMessage.tsx          # Individual message component
-│       ├── AppConfirmation.tsx      # "Create this app?" dialog
-│       ├── AppsList.tsx             # List of created apps
-│       ├── AppCard.tsx              # Individual app card
-│       ├── AppDetails.tsx           # App detail view
-│       └── AppLogs.tsx              # Execution logs view
-│
-├── pages/
-│   └── ai-apps/
-│       ├── index.tsx                # Main AI Apps page
-│       └── [appId].tsx              # App detail page
-│
-├── hooks/
-│   └── useAIChat.ts                 # Chat state management
-│
-└── services/
-    └── ai-apps.service.ts           # API calls to backend
-```
-
-### Component Responsibilities
-
-| Component | What It Does |
-|-----------|--------------|
-| `AIChatbox.tsx` | Main chat UI — input box, message list, streaming response display |
-| `ChatMessage.tsx` | Renders individual messages (user vs AI styling, markdown support) |
-| `AppConfirmation.tsx` | Modal that shows "AI wants to create this app — confirm?" before creation |
-| `AppsList.tsx` | Grid/list of all apps with status badges, last run time, action buttons |
-| `AppCard.tsx` | Individual app card with name, description, status, quick actions |
-| `AppDetails.tsx` | Full app detail view — configuration, execution history, logs |
-| `AppLogs.tsx` | Execution log viewer with filtering, error highlighting |
-
-### Chat Interface Design
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  🤖 AI App Builder                                              [?] [×] │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 🤖 AI                                                               │ │
-│  │ Hi! I can help you create automation apps for your community.      │ │
-│  │ Try asking me to:                                                   │ │
-│  │ • "Create a weekly email digest for active users"                  │ │
-│  │ • "Build an app that detects low-quality posts"                    │ │
-│  │ • "Set up a welcome series for new members"                        │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 👤 You                                                              │ │
-│  │ Create an app that sends personalized emails every Monday based    │ │
-│  │ on user's activity and Shopify purchases                           │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 🤖 AI                                                               │ │
-│  │ I'll create a **Weekly Personalized Email** app for you:           │ │
-│  │                                                                     │ │
-│  │ **Trigger:** Every Monday at 9:00 AM                               │ │
-│  │                                                                     │ │
-│  │ **Data Sources:**                                                   │ │
-│  │ • Active users with email                                          │ │
-│  │ • User engagement (XP, posts, missions)                            │ │
-│  │ • Shopify orders (last 7 days)                                     │ │
-│  │                                                                     │ │
-│  │ **Action:**                                                         │ │
-│  │ • Generate personalized email using AI                             │ │
-│  │ • Send via SendGrid                                                │ │
-│  │                                                                     │ │
-│  │ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐        │ │
-│  │ │ ✓ Create App    │ │ ✎ Modify        │ │ ✗ Cancel        │        │ │
-│  │ └─────────────────┘ └─────────────────┘ └─────────────────┘        │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│  ┌────────────────────────────────────────────────────────────────┐    │
-│  │ Type your request...                                      [Send]│    │
-│  └────────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Apps Management UI
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Your Micro-Apps                                           [+ Create New]│
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 📧 Weekly Personalized Email                        [Active] ⚙️ ▶️  │ │
-│  │ Sends personalized emails every Monday                              │ │
-│  │ ────────────────────────────────────────────────────────────────── │ │
-│  │ Trigger: Every Monday 9am  │  Last run: 2 days ago  │  Sent: 1,247 │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 🔍 Low-Quality Post Detector                        [Active] ⚙️ ▶️  │ │
-│  │ Flags suspicious posts for review                                   │ │
-│  │ ────────────────────────────────────────────────────────────────── │ │
-│  │ Trigger: On new post  │  Last run: 5 min ago  │  Flagged: 3 today  │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │ 👋 New User Welcome Series                          [Paused] ⚙️ ▶️  │ │
-│  │ 3-email series for new users (Day 1, 3, 7)                          │ │
-│  │ ────────────────────────────────────────────────────────────────── │ │
-│  │ Trigger: On user signup  │  Last run: 1 day ago  │  Sent: 89       │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Chatbox Backend API
-
-The chatbox communicates with the backend through a REST API that handles AI conversations and streaming responses.
-
-#### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/v1/ai-apps/chat` | Send a message and get AI response (streaming) |
-| GET | `/api/v1/ai-apps/conversations` | List conversation history |
-| GET | `/api/v1/ai-apps/conversations/:id` | Get specific conversation |
-| DELETE | `/api/v1/ai-apps/conversations/:id` | Delete conversation |
-
-#### Chat Endpoint
-
-**Request:**
-
-```typescript
-POST /api/v1/ai-apps/chat
-Authorization: Bearer {admin_jwt_token}
-Content-Type: application/json
-
-{
-  "message": "Create an app that sends weekly engagement emails",
-  "conversation_id": "conv_abc123",  // Optional: continue existing conversation
-  "require_confirmation": true       // Optional: require user confirm before app creation
-}
-```
-
-**Response (Server-Sent Events for streaming):**
-
-```typescript
-// Stream response using SSE
-Content-Type: text/event-stream
-
-event: message_start
-data: {"conversation_id": "conv_abc123", "message_id": "msg_xyz789"}
-
-event: content_delta
-data: {"delta": "I'll create a **Weekly Engagement"}
-
-event: content_delta
-data: {"delta": " Digest** app for you."}
-
-event: tool_use
-data: {"tool": "create_app", "status": "pending", "app_preview": {...}}
-
-event: tool_result
-data: {"tool": "create_app", "status": "success", "app_id": 42}
-
-event: content_delta
-data: {"delta": "\n\n✓ App created successfully!"}
-
-event: message_complete
-data: {"message_id": "msg_xyz789", "usage": {"input_tokens": 150, "output_tokens": 320}}
-```
-
-#### Chat Controller Implementation
-
-<details>
-<summary>View Chat Controller Implementation</summary>
-
-```typescript
-@Controller('api/v1/ai-apps')
-@UseGuards(JwtAuthGuard, AdminGuard)
-export class AiAppsController {
-  @Post('chat')
-  @Sse()
-  async chat(
-    @Body() body: ChatRequestDto,
-    @Request() req: AuthenticatedRequest,
-  ): Promise<Observable<MessageEvent>> {
-    const { tenant_id, user_id } = req;
-
-    // Rate limit check
-    const rateCheck = await this.rateLimitService.checkLimit(tenant_id, 'chatbox');
-    if (!rateCheck.allowed) {
-      throw new TooManyRequestsException(
-        `Rate limit exceeded. Try again in ${rateCheck.reset_in_seconds}s`
-      );
-    }
-
-    // Create or get conversation
-    const conversation = body.conversation_id
-      ? await this.conversationService.get(body.conversation_id)
-      : await this.conversationService.create(tenant_id, user_id);
-
-    // Build Claude request with MCP tools
-    const claudeRequest = {
-      model: process.env.ANTHROPIC_MODEL,
-      max_tokens: 4096,
-      system: this.buildSystemPrompt(tenant_id),
-      messages: [
-        ...conversation.messages,
-        { role: 'user', content: body.message },
-      ],
-      tools: this.mcpToolService.getAvailableTools(tenant_id),
-      stream: true,
-    };
-
-    // Return streaming response
-    return this.claudeService.streamWithToolExecution(
-      claudeRequest,
-      {
-        tenant_id,
-        user_id,
-        conversation_id: conversation.id,
-        require_confirmation: body.require_confirmation,
-      }
-    );
-  }
-
-  private buildSystemPrompt(tenant_id: string): string {
-    return `You are an AI assistant that helps create micro-apps for the Decommerce platform.
-
-Tenant: ${tenant_id}
-Available tools: create_app, list_apps, update_app, delete_app, run_app, pause_app
-
-When creating apps:
-1. Ask clarifying questions if the request is ambiguous
-2. Generate a complete app configuration
-3. Explain what the app will do before creating it
-4. Use the create_app tool to save the app
-
-Always be helpful and explain your actions clearly.`;
-  }
-}
-```
-
-</details>
-
-#### Tool Confirmation Flow
-
-When `require_confirmation: true`, the API pauses before executing destructive tools:
-
-```typescript
-event: tool_use
-data: {
-  "tool": "create_app",
-  "status": "awaiting_confirmation",
-  "app_preview": {
-    "name": "Weekly Engagement Digest",
-    "trigger": "scheduled",
-    "actions": ["fetch users", "generate email", "send email"]
-  },
-  "confirmation_id": "confirm_abc123"
-}
-
-// Frontend shows confirmation dialog
-// User clicks "Confirm"
-
-POST /api/v1/ai-apps/confirm
-{
-  "confirmation_id": "confirm_abc123",
-  "approved": true
-}
-
-// Stream continues with tool execution
-event: tool_result
-data: {"tool": "create_app", "status": "success", "app_id": 42}
-```
-
-#### Conversation Storage
-
-```typescript
-interface Conversation {
-  id: string;
-  tenant_id: string;
-  user_id: number;
-  messages: Message[];
-  created_at: Date;
-  updated_at: Date;
-}
-
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  tool_calls?: ToolCall[];
-  timestamp: Date;
-}
-```
+When confirmation is enabled:
+- AI proposes an action that would create/update/delete an app.
+- Backend pauses and emits a “needs confirmation” event with an app preview.
+- Frontend shows a confirmation dialog.
+- If admin approves, backend continues and executes the pending tool call.
 
 ---
 
 ## Micro-App Catalog
 
-### Category 1: Email & Communication Apps
+This is a reference catalog of example apps by category. Not all of these need to ship on day one; the point is to show the kinds of automations the building blocks should enable.
 
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| Weekly Engagement Digest | Scheduled (weekly) | Users, Engagement, Missions | AI generate email → Send email |
-| Win-Back Campaign | Scheduled (daily) | Users (inactive 14+ days) | AI generate email → Send email |
-| New User Welcome Series | On user signup | Users | Send email (Day 1, 3, 7) |
-| Shopify + Community Email | Scheduled (weekly) | Users, Engagement, Shopify Orders | AI generate email → Send email |
-| Mission Reminder | Scheduled (daily) | Users, UserMissions (incomplete) | Send notification |
-| Reward Available Alert | On reward qualified | Users, Contributions | Send email |
-| Top Contributor Spotlight | Scheduled (weekly) | Users, Engagement (top 10) | AI generate email → Send to all |
+**Proposed v1 starter pack (what we should be able to build early):**
 
-### Category 2: Content Automation Apps
+| App | Trigger | Why it’s a good v1 test |
+|-----|---------|--------------------------|
+| Welcome XP Bonus | `user.created` | Exercises event triggers + awarding XP + posting |
+| Room Welcome | `room.member_joined` | Simple event-driven messaging |
+| Mission Completion Congrats | `mission.completed` | Common workflow; clear success criteria |
+| Weekly XP Digest | scheduled | Exercises scheduling + aggregations + email |
+| Reward Reminder | scheduled | Exercises filtering + notifications |
+| Purchase Thank You | `shopify.order.created` | Exercises Shopify mapping + user matching |
+| Content Moderator (basic) | `post.created` | Exercises AI step + moderation action |
 
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| AI Weekly Recap Post | Scheduled (weekly) | Analytics, Posts (top) | AI generate content → Create post |
-| Auto Welcome Post | On user joins room | Users, Rooms | AI generate welcome → Create post |
-| Product Announcement | On Shopify product added | Shopify Products | AI generate announcement → Create post |
-| Event Reminder Post | Scheduled (before event) | Missions (upcoming) | Create reminder post |
-| User Milestone Celebration | On XP milestone | Users | AI generate congrats → Create post |
-| Community Highlights | Scheduled (monthly) | Posts, Users, Analytics | AI generate summary → Create post |
+### Email & Communication
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Weekly XP Digest | Scheduled: Monday 8 AM | Sends email with XP earned, missions completed, rank change |
+| Streak Warning | Scheduled: Daily 6 PM | Alerts users whose streak expires in next 6 hours |
+| Reward Reminder | Scheduled: Weekly | Notifies users with unclaimed rewards (500+ XP available) |
+| Room Welcome | Event: room.member_joined | Sends personalized welcome message to new room members |
+| Campaign Kickoff | Event: campaign.started | Emails opted-in users about new campaign with first mission link |
+| Win-Back Email | Scheduled: Weekly | Targets users inactive 30+ days with special "comeback" mission |
 
-### Category 3: Engagement & Gamification Apps
+### Content Automation
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Mission Announcer | Event: mission.created | Auto-posts mission announcement in relevant room |
+| Leaderboard Update | Scheduled: Friday 5 PM | Posts weekly leaderboard to #announcements room |
+| Milestone Celebration | Event: milestone.reached | Creates congratulations post when user hits XP milestone |
+| Campaign Recap | Event: campaign.ended | Posts campaign results with top performers and stats |
+| New Member Spotlight | Scheduled: Daily | Features users who joined in last 24 hours |
 
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| Engagement Campaign Builder | Manual / Scheduled | Missions, Rewards | Create missions + Create rewards |
-| Weekly Leaderboard Rewards | Scheduled (weekly) | Users (top 10 by XP) | Award XP + Send notification |
-| Streak Bonus System | Daily check | Users, Engagement (daily activity) | Award bonus XP |
-| Referral Booster Campaign | Manual | Invitations, Users | Create referral missions |
-| Room Activity Challenge | Manual | Rooms, Posts | Create challenge mission |
-| New User Onboarding | On user signup | Users, Missions | Assign kick-off missions |
+### Engagement & Gamification
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Streak Bonus | Event: contribution.completed | Awards +50% XP if user has 7+ day streak |
+| Leaderboard Climber | Event: xp.awarded | Mints "Rising Star" badge when user enters top 10 |
+| NFT Badge Minter | Event: milestone.reached | Auto-mints NFT badge when XP threshold hit |
+| Room Activity Booster | Scheduled: Daily | Awards bonus XP for posting in rooms with <5 posts today |
+| Referral Tracker | Event: user.created | Awards XP to referrer when referred user completes first mission |
+| Hangman Helper | Scheduled: Daily | Sends hint to users stuck on hangman for 24+ hours |
 
-### Category 4: Analytics & Reporting Apps
+### Analytics & Reporting
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Weekly Admin Digest | Scheduled: Monday 9 AM | Emails admin with engagement metrics, top performers |
+| Churn Risk Alert | Scheduled: Daily | Flags users inactive 14+ days; creates re-engagement list |
+| Mission Effectiveness | Scheduled: Weekly | Reports completion rates by mission type (trivia vs hangman) |
+| Shopify Correlation | Scheduled: Monthly | Analyzes purchase behavior vs community engagement |
+| Room Health Dashboard | Scheduled: Daily | Updates dashboard widgets with room activity metrics |
 
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| Weekly Admin Report | Scheduled (weekly) | Analytics, Users, Posts | AI generate report → Email admins |
-| Churn Risk Alert | Scheduled (daily) | Users, Engagement | AI analyze → Notification to admins |
-| Content Performance Report | Scheduled (weekly) | Posts, Votes, Comments | AI generate report → Email admins |
-| Mission Effectiveness Report | Scheduled (monthly) | Missions, UserMissions | AI analyze → Create report post |
-| Shopify-Community Correlation | Scheduled (monthly) | Shopify, Engagement | AI analyze → Email admins |
-| Room Health Dashboard | Scheduled (weekly) | Rooms, Posts, Users | Generate stats → Email admins |
+### Moderation & Management
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Content Moderator | Event: post.created | AI analyzes post quality; flags suspicious content |
+| Inactive Cleanup | Scheduled: Monthly | Identifies users with 0 activity in 90 days |
+| New User Watchlist | Event: user.created | Monitors first 7 days of activity; alerts if suspicious |
+| Engagement Calculator | Scheduled: Daily | Recalculates engagement scores based on recent activity |
+| Room Archiver | Scheduled: Monthly | Auto-archives rooms with <10 posts in 60 days |
 
-### Category 5: Moderation & Management Apps
-
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| Low-Quality Post Detector | On new post | Posts | AI analyze → Flag post / Notify admins |
-| Inactive User Cleanup | Scheduled (weekly) | Users (inactive 30+ days) | Flag users / Send win-back email |
-| New User Watchlist | On new user's first post | Users, Posts | AI analyze → Flag if suspicious |
-| Engagement Score Calculator | Scheduled (daily) | Users, Posts, Missions, Votes | Calculate score → Update user |
-| Auto-Archive Old Rooms | Scheduled (monthly) | Rooms (no activity 60 days) | Archive room / Notify admins |
-
-### Category 6: Shopify Integration Apps
-
-| App Name | Trigger | Data Sources | Actions |
-|----------|---------|--------------|---------|
-| Purchase Thank You | On Shopify order | Shopify Orders, Users | Create thank you post + Mission |
-| VIP Buyer Rewards | On order above threshold | Shopify Orders, Users | Award bonus XP + Notification |
-| Product Review Request | 7 days after purchase | Shopify Orders, Users | Send email with review mission |
-| First Purchase Celebration | On first order | Shopify Orders, Users | Create celebration post + Reward |
-| Abandoned Cart Recovery | On cart abandoned | Shopify Carts, Users | Send notification |
+### Shopify Integration
+| App Name | Trigger | What It Does |
+|----------|---------|--------------|
+| Purchase Thank You | Event: shopify.order.created | Awards XP (1 per $1 spent) + "Customer" badge |
+| VIP Buyer | Event: shopify.order.fulfilled | Mints "VIP" NFT badge at $500 lifetime purchases |
+| Review Request | Delayed: 7 days after order.fulfilled | Creates "Share Experience" mission with 300 XP reward |
+| First Purchase Celebration | Event: shopify.order.created | Awards "First Purchase" badge + room invite |
+| Restock Alert | Event: shopify.product.restocked | Notifies previous buyers of product availability |
 
 ---
 
@@ -1229,314 +992,77 @@ These end-to-end examples show how micro-apps work together to solve actual Deco
 
 ## App Configuration Schema
 
-### Full Schema
+An app configuration contains:
 
-```typescript
-interface AppConfig {
-  // App metadata
-  app: {
-    name: string;
-    description?: string;
-    version: string;
-    icon?: string;
-  };
+### 1) App metadata
+- name
+- optional description
+- version string
+- optional icon
 
-  // When the app runs
-  trigger: TriggerConfig;
+### 2) Trigger configuration
+Supported trigger types:
+- **scheduled**: cron expression + optional timezone
+- **event**: platform event name + optional filter
+- **manual**: run on admin request
+- **delayed**: event-based sequence with one or more delays (used for multi-step sequences like welcome series)
 
-  // Data to fetch
-  data_pipeline: DataStepConfig[];
+### 3) Data pipeline
+An ordered list of steps. Each step has:
+- a unique step id
+- a connector type (which dataset to fetch)
+- optional filter criteria
+- optional field selection
+- optional join/merge behavior (depending on the chosen pipeline design)
+- optional limits
+- optional post-fetch transformations (see Logic Transformations)
 
-  // What to do with the data
-  actions: ActionConfig[];
+#### Data Pipeline Visualization
 
-  // Optional settings
-  settings?: {
-    enabled: boolean;
-    retry_on_error: boolean;
-    max_retries: number;
-    notify_on_error: boolean;
-  };
-}
+<pre>
+┌──────────────────────────────────────────────────────────────────────┐
+│                        DATA PIPELINE                                  │
+│                                                                      │
+│  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐   │
+│  │ Connector │───▶│ Transform │───▶│ Transform │───▶│  Output   │   │
+│  │  (fetch)  │    │ (filter)  │    │  (sort)   │    │  (data)   │   │
+│  └───────────┘    └───────────┘    └───────────┘    └─────┬─────┘   │
+│       │                                                    │         │
+│       │ Example:                                           │         │
+│       │ users connector                                    │         │
+│       │ → filter: status = "active"                        ▼         │
+│       │ → sort: engagement_score DESC              ┌───────────┐    │
+│       │ → limit: 10                                │  ACTIONS  │    │
+│       │                                            │ (execute) │    │
+│       └────────────────────────────────────────────┴───────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
+</pre>
 
-// Trigger configurations
-type TriggerConfig =
-  | { type: 'scheduled'; cron: string; timezone?: string }
-  | { type: 'event'; event: EventType; filter?: Record<string, any> }
-  | { type: 'manual' };
+### 4) Actions
+An ordered list of actions. Each action has:
+- an action type
+- optional condition (execute only when condition matches)
+- action parameters (inputs)
 
-type EventType =
-  | 'user.created'
-  | 'user.verified'
-  | 'post.created'
-  | 'post.reported'
-  | 'mission.completed'
-  | 'reward.claimed'
-  | 'room.joined'
-  | 'shopify.order.created'
-  | 'shopify.order.fulfilled';
-
-// Data pipeline step
-interface DataStepConfig {
-  id: string;
-  connector: ConnectorType;
-  filter?: Record<string, any>;
-  fields?: string[];
-  join_on?: string;
-  limit?: number;
-}
-
-type ConnectorType =
-  | 'users'
-  | 'user_engagement'
-  | 'posts'
-  | 'rooms'
-  | 'room_members'
-  | 'missions'
-  | 'user_missions'
-  | 'contributions'
-  | 'reward_claims'
-  | 'shopify_orders'
-  | 'shopify_products'
-  | 'analytics'
-  | 'notifications';
-
-// Action configuration
-interface ActionConfig {
-  type: ActionType;
-  condition?: ConditionConfig;
-  params: Record<string, any>;
-}
-
-type ActionType =
-  | 'send_email'
-  | 'create_post'
-  | 'send_notification'
-  | 'update_user'
-  | 'create_mission'
-  | 'award_xp'
-  | 'flag_content'
-  | 'webhook'
-  | 'for_each'
-  | 'ai_analyze'
-  | 'ai_generate';
-
-// Condition configuration for conditional actions
-interface ConditionConfig {
-  field: string;           // Field path (supports dot notation: "user.status")
-  operator: ConditionOperator;
-  value: any;              // Value to compare against
-  // Optional: combine multiple conditions
-  and?: ConditionConfig[];
-  or?: ConditionConfig[];
-}
-
-type ConditionOperator =
-  | 'equals'           // field === value
-  | 'not_equals'       // field !== value
-  | 'contains'         // field.includes(value) - for strings/arrays
-  | 'not_contains'     // !field.includes(value)
-  | 'starts_with'      // field.startsWith(value)
-  | 'ends_with'        // field.endsWith(value)
-  | 'greater_than'     // field > value
-  | 'greater_than_or_equals' // field >= value
-  | 'less_than'        // field < value
-  | 'less_than_or_equals'    // field <= value
-  | 'is_null'          // field === null || field === undefined
-  | 'is_not_null'      // field !== null && field !== undefined
-  | 'is_empty'         // field.length === 0 (for strings/arrays)
-  | 'is_not_empty'     // field.length > 0
-  | 'in'               // value.includes(field) - field is in array
-  | 'not_in'           // !value.includes(field)
-  | 'matches'          // RegExp(value).test(field)
-  | 'between';         // value[0] <= field <= value[1]
-```
-
-### Example: Low-Quality Post Detector
-
-<details>
-<summary>View Low-Quality Post Detector Config</summary>
-
-```json
-{
-  "app": {
-    "name": "Low-Quality Post Detector",
-    "description": "Automatically flags suspicious posts for review",
-    "version": "1.0"
-  },
-
-  "trigger": {
-    "type": "event",
-    "event": "post.created"
-  },
-
-  "data_pipeline": [
-    {
-      "id": "new_post",
-      "connector": "posts",
-      "filter": { "id": "{{trigger.post_id}}" }
-    },
-    {
-      "id": "author",
-      "connector": "users",
-      "filter": { "id": "{{new_post.author_id}}" }
-    },
-    {
-      "id": "author_history",
-      "connector": "posts",
-      "filter": { "author_id": "{{author.id}}" },
-      "limit": 10
-    }
-  ],
-
-  "actions": [
-    {
-      "type": "ai_analyze",
-      "params": {
-        "input": "{{new_post}}",
-        "prompt": "Analyze this post for quality issues: spam patterns, very short content (<20 chars), repeated characters, inappropriate language. Return { is_low_quality: boolean, reasons: string[], confidence: number }",
-        "output_var": "analysis"
-      }
-    },
-    {
-      "type": "flag_content",
-      "condition": {
-        "field": "analysis.is_low_quality",
-        "operator": "equals",
-        "value": true
-      },
-      "params": {
-        "content_type": "post",
-        "content_id": "{{new_post.id}}",
-        "reason": "{{analysis.reasons}}",
-        "set_status": "PENDING"
-      }
-    },
-    {
-      "type": "send_notification",
-      "condition": {
-        "field": "analysis.is_low_quality",
-        "operator": "equals",
-        "value": true
-      },
-      "params": {
-        "to": "admins",
-        "title": "Post flagged for review",
-        "message": "Post by {{author.email}} flagged: {{analysis.reasons}}"
-      }
-    }
-  ]
-}
-```
-
-</details>
-
-### Example: Weekly Engagement Digest
-
-<details>
-<summary>View Weekly Engagement Digest Config</summary>
-
-```json
-{
-  "app": {
-    "name": "Weekly Engagement Digest",
-    "description": "Personalized weekly email to active users",
-    "version": "1.0"
-  },
-
-  "trigger": {
-    "type": "scheduled",
-    "cron": "0 9 * * MON",
-    "timezone": "UTC"
-  },
-
-  "data_pipeline": [
-    {
-      "id": "active_users",
-      "connector": "users",
-      "filter": {
-        "status": "Active",
-        "has_email": true,
-        "last_active": { "$gte": "-30d" }
-      }
-    },
-    {
-      "id": "user_stats",
-      "connector": "user_engagement",
-      "join_on": "active_users.id",
-      "fields": ["xp_this_week", "posts_this_week", "missions_completed_this_week"]
-    },
-    {
-      "id": "available_missions",
-      "connector": "missions",
-      "filter": { "is_active": true }
-    }
-  ],
-
-  "actions": [
-    {
-      "type": "for_each",
-      "params": {
-        "items": "active_users",
-        "as": "user",
-        "do": [
-          {
-            "type": "ai_generate",
-            "params": {
-              "prompt": "Write a friendly weekly digest email for {{user.first_name}}. This week they earned {{user.xp_this_week}} XP, made {{user.posts_this_week}} posts. Suggest 2-3 missions from: {{available_missions}}. Keep it under 150 words, encouraging tone.",
-              "output_var": "email_body"
-            }
-          },
-          {
-            "type": "send_email",
-            "params": {
-              "to": "{{user.email}}",
-              "subject": "Your weekly community update, {{user.first_name}}!",
-              "body": "{{email_body}}",
-              "template": "digest"
-            }
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-</details>
+### 5) Optional settings
+Examples of settings:
+- enabled/disabled
+- retry behavior and retry limits
+- notify-on-error
 
 ---
 
 ## Variable Interpolation
 
-Apps use **variable interpolation** to reference data from the data pipeline, trigger events, and action outputs. The syntax is `{{variable}}` using double curly braces.
+Configurations use template placeholders to reference values available at runtime.
 
-### Basic Syntax
-
-```
-{{variable_name}}           → Simple variable reference
-{{object.property}}         → Dot notation for nested access
-{{array[0]}}                → Array index access
-{{object.items[0].name}}    → Combined nested + array access
-```
+### Syntax
+- Variables are referenced using a double-brace placeholder format: `{{variable.name}}`
 
 ### Variable Sources
 
-#### By Source Type
-
-| Source | Syntax | Example |
-|--------|--------|---------|
-| **Data pipeline step** | `{{step_id.field}}` | `{{active_users.email}}` |
-| **Trigger payload** | `{{trigger.field}}` | `{{trigger.post_id}}` |
-| **Loop variable** | `{{loop_var.field}}` | `{{user.first_name}}` (inside for_each) |
-| **Action output** | `{{output_var}}` | `{{email_body}}` (from ai_generate) |
-| **App metadata** | `{{app.field}}` | `{{app.name}}` |
-| **Current context** | `{{now}}`, `{{tenant_id}}`, `{{execution_id}}` | Execution timestamp, current tenant |
-
-#### Decommerce-Specific Variables
-
-| Category | Available Variables |
-|----------|---------------------|
+| Source | Available Variables |
+|--------|---------------------|
 | **User data** | `user.id`, `user.email`, `user.name`, `user.xp_total`, `user.web3_account`, `user.engagement_score` |
 | **Mission data** | `mission.id`, `mission.name`, `mission.xp_reward`, `mission.action_type`, `mission.status` |
 | **Contribution data** | `contribution.id`, `contribution.type`, `contribution.days_in_a_row`, `contribution.completed` |
@@ -1549,7 +1075,7 @@ Apps use **variable interpolation** to reference data from the data pipeline, tr
 | **AI outputs** | `ai_result.text`, `ai_result.classification`, `ai_result.score` |
 | **Pipeline outputs** | `steps.step_id.data`, `steps.step_id.count` |
 
-#### Decommerce-Specific Examples
+### Example Interpolations
 
 | Template | Result |
 |----------|--------|
@@ -1558,626 +1084,130 @@ Apps use **variable interpolation** to reference data from the data pipeline, tr
 | `Thanks for your {{order.totalPriceAmount}} {{order.currency}} order!` | "Thanks for your 49.99 USD order!" |
 | `Welcome to {{room.name}} ({{room.member_count}} members)` | "Welcome to Gaming Lounge (342 members)" |
 | `You've earned the {{badge.name}} badge!` | "You've earned the VIP Customer badge!" |
+| `Campaign {{campaign.name}} ends {{campaign.end_date \| date}}` | "Campaign Summer Challenge ends Jan 31" |
 
-### Variable Scoping Rules
-
-Variables are resolved in order of priority (inner scope shadows outer):
-
-```
-┌─────────────────────────────────────────────────────┐
-│ 1. GLOBAL (lowest priority)                         │
-│    - trigger.*, app.*, now, tenant_id, execution_id │
-│  ┌─────────────────────────────────────────────────┐│
-│  │ 2. PIPELINE                                     ││
-│  │    - Each data step adds: step_id.*             ││
-│  │  ┌─────────────────────────────────────────────┐││
-│  │  │ 3. LOOP (shadows outer if same name)        │││
-│  │  │    - for_each adds: as_variable.*           │││
-│  │  │  ┌─────────────────────────────────────────┐│││
-│  │  │  │ 4. ACTION OUTPUT (highest priority)     ││││
-│  │  │  │    - output_var from previous actions   ││││
-│  │  │  └─────────────────────────────────────────┘│││
-│  │  └─────────────────────────────────────────────┘││
-│  └─────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────┘
-```
-
-**Example of Scoping:**
-
-```json
-{
-  "data_pipeline": [
-    { "id": "user", "connector": "users", "filter": { "id": "{{trigger.user_id}}" } }
-  ],
-  "actions": [
-    {
-      "type": "for_each",
-      "params": {
-        "items": "{{user.friends}}",
-        "as": "friend",
-        "do": [
-          {
-            "type": "ai_generate",
-            "params": { "prompt": "Write greeting for {{friend.name}}", "output_var": "greeting" }
-          },
-          {
-            "type": "send_notification",
-            "params": {
-              "to": ["{{friend.id}}"],
-              "message": "{{greeting}}"
-            }
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-In this example:
-- `{{trigger.user_id}}` comes from global scope
-- `{{user.friends}}` comes from pipeline step
-- `{{friend.name}}` comes from loop scope (shadows any outer `friend`)
-- `{{greeting}}` comes from action output scope
-
-### Default Values
-
-Use the `|` pipe operator to provide fallback values:
-
-```
-{{user.nickname | user.first_name}}      → Use nickname, fallback to first_name
-{{user.avatar | "default.png"}}          → Use avatar, fallback to literal string
-{{stats.posts_count | 0}}                → Use posts_count, fallback to 0
-```
-
-### Filters & Transformations
-
-Apply transformations using the `:` colon operator:
-
-```
-{{user.first_name:uppercase}}            → JOHN
-{{user.email:lowercase}}                 → john@example.com
-{{created_at:date("YYYY-MM-DD")}}        → 2025-01-29
-{{amount:number("0.00")}}                → 1234.56
-{{items:count}}                          → 5 (array length)
-{{content:truncate(100)}}                → First 100 chars...
-{{list:join(", ")}}                      → item1, item2, item3
-{{value:json}}                           → JSON stringify
-```
-
-### Available Filters
-
-| Filter | Description | Example |
-|--------|-------------|---------|
-| `uppercase` | Convert to uppercase | `{{name:uppercase}}` → "JOHN" |
-| `lowercase` | Convert to lowercase | `{{email:lowercase}}` → "john@example.com" |
-| `capitalize` | Capitalize first letter | `{{name:capitalize}}` → "John" |
-| `trim` | Remove whitespace | `{{input:trim}}` |
-| `date(format)` | Format date | `{{created_at:date("MMM D, YYYY")}}` → "Jan 29, 2025" |
-| `number(format)` | Format number | `{{price:number("0,0.00")}}` → "1,234.56" |
-| `count` | Array length | `{{users:count}}` → 42 |
-| `first` | First array element | `{{items:first}}` |
-| `last` | Last array element | `{{items:last}}` |
-| `join(sep)` | Join array | `{{tags:join(", ")}}` → "a, b, c" |
-| `truncate(n)` | Truncate string | `{{content:truncate(50)}}` → "First 50 chars..." |
-| `json` | JSON stringify | `{{object:json}}` |
-| `default(val)` | Default if null | `{{name:default("Anonymous")}}` |
-
-### Escaping
-
-To output literal `{{` without interpolation, use double brackets:
-
-```
-{{{{variable}}}}  → Outputs: {{variable}}
-```
-
-### Interpolation in Different Contexts
-
-**In filter values:**
-```json
-{
-  "filter": { "user_id": "{{trigger.user_id}}" }
-}
-```
-
-**In action params:**
-```json
-{
-  "type": "send_email",
-  "params": {
-    "to": "{{user.email}}",
-    "subject": "Hello {{user.first_name}}!"
-  }
-}
-```
-
-**In AI prompts:**
-```json
-{
-  "type": "ai_generate",
-  "params": {
-    "prompt": "Write a welcome message for {{user.first_name}} who joined {{user.created_at:date('MMMM YYYY')}}."
-  }
-}
-```
-
-### Variable Scope
-
-Variables are scoped hierarchically:
-
-1. **Global scope**: `trigger.*`, `app.*`, `now`, `tenant_id`
-2. **Pipeline scope**: Each data step adds its `step_id` to scope
-3. **Loop scope**: `for_each` adds its `as` variable (shadows outer variables)
-4. **Action scope**: `output_var` from previous actions
-
-```json
-{
-  "data_pipeline": [
-    { "id": "users", "connector": "users" }
-  ],
-  "actions": [
-    {
-      "type": "for_each",
-      "params": {
-        "items": "users",
-        "as": "user",
-        "do": [
-          {
-            "type": "ai_generate",
-            "params": {
-              "prompt": "Welcome {{user.first_name}}",
-              "output_var": "welcome_msg"
-            }
-          },
-          {
-            "type": "send_email",
-            "params": {
-              "to": "{{user.email}}",
-              "body": "{{welcome_msg}}"
-            }
-          }
-        ]
-      }
-    }
-  ]
-}
-```
+### Common features
+- Dot notation for nested fields: `{{user.profile.avatar_url}}`
+- Array indexing: `{{steps.users.data[0].name}}`
+- Default/fallback values: `{{user.nickname \| default:user.name}}`
+- Formatting filters: `uppercase`, `lowercase`, `date`, `number`, `truncate`, `join`, `json`
+- Clear scoping rules: global → pipeline → loop → action outputs
 
 ---
 
 ## App Configuration Validation
 
-Before an AI-generated app configuration is saved, it must pass validation. This ensures apps are safe, well-formed, and within limits.
+Before saving an AI-generated configuration, we will require validation to pass:
 
-### Validation Pipeline
+### 1) Schema validation
+Ensures:
+- trigger exists and is valid
+- at least one action exists
+- action types are recognized
+- connector types are recognized
 
-```
-AI generates config → Schema Validation → Semantic Validation → Limit Checks → Save
-```
+### 2) Semantic validation
+Ensures:
+- all referenced variables are defined in scope (or are built-ins)
+- cron expressions are valid for scheduled triggers
+- event names are valid for event triggers
+- actions include required parameters (e.g., email requires recipient/subject/body)
+- loop actions include required loop fields and nested actions
 
-### Schema Validation
+### 3) Limit validation
 
-Validates that the configuration matches the expected TypeScript interface:
+Enforces platform constraints:
 
-```typescript
-class AppConfigValidator {
-  validateSchema(config: unknown): ValidationResult {
-    // 1. Required fields
-    if (!config.trigger) return { valid: false, errors: ['Missing trigger'] };
-    if (!config.actions || config.actions.length === 0) {
-      return { valid: false, errors: ['At least one action required'] };
-    }
+| Limit | Value |
+|-------|-------|
+| Max pipeline steps | 10 |
+| Max actions per app | 20 |
+| Max nested actions (in loops) | 50 |
+| Max loop nesting depth | 2 |
+| Max apps per tenant | Per tier (10-unlimited) |
+| Max items per loop | 5,000 |
 
-    // 2. Trigger type validation
-    const validTriggers = ['scheduled', 'event', 'delayed', 'manual'];
-    if (!validTriggers.includes(config.trigger.type)) {
-      return { valid: false, errors: [`Invalid trigger type: ${config.trigger.type}`] };
-    }
-
-    // 3. Action type validation
-    for (const action of config.actions) {
-      if (!VALID_ACTION_TYPES.includes(action.type)) {
-        return { valid: false, errors: [`Invalid action type: ${action.type}`] };
-      }
-    }
-
-    // 4. Connector type validation
-    for (const step of config.data_pipeline || []) {
-      if (!VALID_CONNECTOR_TYPES.includes(step.connector)) {
-        return { valid: false, errors: [`Invalid connector: ${step.connector}`] };
-      }
-    }
-
-    return { valid: true, errors: [] };
-  }
-}
-```
-
-### Semantic Validation
-
-Validates that the configuration makes logical sense:
-
-```typescript
-class SemanticValidator {
-  validate(config: AppConfig): ValidationResult {
-    const errors: string[] = [];
-
-    // 1. Variable references exist
-    const definedVariables = this.collectDefinedVariables(config);
-    const usedVariables = this.extractUsedVariables(config);
-
-    for (const variable of usedVariables) {
-      if (!definedVariables.includes(variable) && !this.isBuiltIn(variable)) {
-        errors.push(`Undefined variable: {{${variable}}}`);
-      }
-    }
-
-    // 2. Cron expression is valid (for scheduled triggers)
-    if (config.trigger.type === 'scheduled') {
-      if (!this.isValidCron(config.trigger.cron)) {
-        errors.push(`Invalid cron expression: ${config.trigger.cron}`);
-      }
-    }
-
-    // 3. Event exists (for event triggers)
-    if (config.trigger.type === 'event') {
-      if (!VALID_EVENTS.includes(config.trigger.event)) {
-        errors.push(`Unknown event: ${config.trigger.event}`);
-      }
-    }
-
-    // 4. Email has required fields
-    for (const action of this.findActions(config, 'send_email')) {
-      if (!action.params.to) errors.push('send_email missing "to" parameter');
-      if (!action.params.subject) errors.push('send_email missing "subject" parameter');
-      if (!action.params.body) errors.push('send_email missing "body" parameter');
-    }
-
-    // 5. for_each has items and nested actions
-    for (const action of this.findActions(config, 'for_each')) {
-      if (!action.params.items) errors.push('for_each missing "items" parameter');
-      if (!action.params.as) errors.push('for_each missing "as" parameter');
-      if (!action.params.do || action.params.do.length === 0) {
-        errors.push('for_each missing nested actions in "do"');
-      }
-    }
-
-    return { valid: errors.length === 0, errors };
-  }
-}
-```
-
-### Limit Validation
-
-Ensures the app is within resource limits:
-
-```typescript
-class LimitValidator {
-  async validate(config: AppConfig, tenant_id: string): Promise<ValidationResult> {
-    const errors: string[] = [];
-
-    // 1. Pipeline steps limit
-    if ((config.data_pipeline?.length || 0) > MAX_PIPELINE_STEPS) {
-      errors.push(`Too many data pipeline steps (max: ${MAX_PIPELINE_STEPS})`);
-    }
-
-    // 2. Actions limit
-    const actionCount = this.countActions(config.actions);
-    if (actionCount > MAX_ACTIONS_PER_APP) {
-      errors.push(`Too many actions (max: ${MAX_ACTIONS_PER_APP})`);
-    }
-
-    // 3. Nesting depth limit
-    const depth = this.maxNestingDepth(config.actions);
-    if (depth > MAX_NESTED_LOOPS) {
-      errors.push(`Nesting too deep (max: ${MAX_NESTED_LOOPS} levels)`);
-    }
-
-    // 4. Apps per tenant limit
-    const existingCount = await this.appService.count({ where: { tenant_id } });
-    if (existingCount >= MAX_APPS_PER_TENANT) {
-      errors.push(`App limit reached (max: ${MAX_APPS_PER_TENANT} per tenant)`);
-    }
-
-    return { valid: errors.length === 0, errors };
-  }
-}
-```
-
-### Validation Response
-
-When validation fails, AI receives detailed error messages:
-
-```typescript
-interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-  warnings?: string[];  // Non-fatal issues
-  suggestions?: string[]; // Improvement suggestions
-}
-
-// Example failure response to AI:
-{
-  "valid": false,
-  "errors": [
-    "Undefined variable: {{user.nickname}} - did you mean {{user.first_name}}?",
-    "send_email missing 'subject' parameter"
-  ],
-  "warnings": [
-    "for_each loop may process many items - consider adding a limit filter"
-  ]
-}
-```
+### Validation feedback
+If invalid, return:
+- a clear list of errors
+- optional warnings (non-fatal)
+- optional suggestions (how to fix)
 
 ---
 
 ## Data Connectors
 
+Connectors are read-only data access building blocks. Each connector defines:
+- what entity/metric it reads from
+- allowed filter fields/operators
+- allowed field selection
+- limits/offsets
+
+**Proposed v1 scope (starting set):**
+- `users`, `rooms`, `posts`
+- `missions`, `user_missions`, `contributions`
+- `shopify_orders`
+
 ### Available Connectors
 
-| Connector | Source | Available Fields |
-|-----------|--------|------------------|
-| `users` | User table | id, email, first_name, last_name, status, created_at, last_active |
-| `user_engagement` | Calculated | total_xp, xp_this_week, posts_count, missions_completed, votes_given |
-| `posts` | Post table | id, content, title, status, author_id, room_id, created_at, votes_count |
-| `rooms` | Room table | id, name, description, member_count, post_count |
-| `room_members` | UserRoom table | user_id, room_id, joined_at, is_admin |
-| `missions` | Mission table | id, title, description, xp, mission_type, is_active |
-| `user_missions` | UserMission table | user_id, mission_id, is_completed, completed_at |
-| `contributions` | Contribution table | id, title, reward_type, is_active |
-| `reward_claims` | ContributionRewardHistory | user_id, contribution_id, claimed_at, status |
-| `shopify_orders` | Shopify API | order_id, customer_email, total, items, created_at |
-| `shopify_products` | Shopify API | product_id, title, price, inventory |
-| `analytics` | BigQuery/Calculated | daily_active_users, posts_per_day, engagement_rate |
-| `notifications` | Notification table | id, user_id, title, read_at |
+| Connector | Description | Key Filters |
+|-----------|-------------|-------------|
+| users | Platform users | status, role, created_at, engagement_score, web3_account |
+| posts | User-generated content | room_id, author_id, created_at, status |
+| rooms | Community spaces | status, type, member_count, is_exclusive |
+| room_members | Room membership data | room_id, user_id, role, is_admin |
+| missions | Available missions | status, type, room_id, action_type |
+| user_missions | User mission progress | user_id, mission_id, status, completed_at |
+| contributions | User contributions | user_id, type, created_at, days_in_a_row |
+| rewards | Reward claims | user_id, reward_type, claimed_at, token_type |
+| campaigns | Mission campaigns | status, type, start_date, end_date |
+| nft_badges | NFT badge definitions | contract_type, room_id, campaign_id, chain_id |
+| milestones | XP milestones | xp_threshold, reward_type |
+| total_rewards | User accumulated rewards | user_id, token_type, amount |
+| hangman_status | Hangman game progress | user_id, mission_id, completed, remain_count |
+| trivia_status | Trivia game progress | user_id, mission_id, score, completed |
+| shopify_orders | Shopify orders | customer_email, status, created_at, totalPriceAmount |
+| shopify_products | Shopify products | status, type, collection |
+| engagement_metrics | Aggregated metrics | user_id, period, metric_type |
+| notifications | Sent notifications | user_id, type, status |
+| app_state | Current app's state storage | key |
 
-### Connector Interface
-
-```typescript
-interface DataConnector {
-  name: string;
-
-  // Fetch data with filters
-  fetch(
-    connection: Connection,
-    filter?: Record<string, any>,
-    options?: { limit?: number; offset?: number; fields?: string[] }
-  ): Promise<any[]>;
-
-  // Get available fields
-  getFields(): FieldDefinition[];
-
-  // Validate filter
-  validateFilter(filter: Record<string, any>): ValidationResult;
-}
-```
+Each connector also:
+- validates filters against allowed operators
+- provides field metadata for documentation and AI guidance
 
 ---
 
 ## Logic Transformations
 
-The data pipeline supports transformations to filter, sort, group, and aggregate data between connector fetches and action execution.
+Between data fetching and action execution, pipeline steps can apply transformations like:
+- filter (keep items matching criteria)
+- sort (order by fields)
+- group (group by a key)
+- aggregate (count/sum/avg/min/max/first/last)
+- merge/join (combine sources using keys)
+- limit (take first N)
+- map (reshape/rename fields and derive new values)
 
-### Available Logic Operations
-
-| Operation | Description | Example |
-|-----------|-------------|---------|
-| `filter` | Keep items matching criteria | Keep users with XP > 100 |
-| `sort` | Order items by field | Sort by created_at descending |
-| `group` | Group items by field | Group posts by room_id |
-| `aggregate` | Calculate stats | Count, sum, average, min, max |
-| `merge` | Combine data sources | Join users with their stats |
-| `limit` | Take first N items | First 100 users |
-| `map` | Transform each item | Extract specific fields |
-
-### Pipeline Step Configuration
-
-```typescript
-interface DataStepConfig {
-  id: string;
-  connector: ConnectorType;
-  filter?: FilterConfig;       // Filter at connector level
-  fields?: string[];           // Select specific fields
-  limit?: number;
-
-  // Post-fetch transformations
-  transform?: TransformConfig[];
-}
-
-interface TransformConfig {
-  operation: 'filter' | 'sort' | 'group' | 'aggregate' | 'merge' | 'limit' | 'map';
-  params: Record<string, any>;
-}
-```
-
-### Filter Syntax
-
-Filters support comparison operators and logical combinations:
-
-```typescript
-interface FilterConfig {
-  // Simple equality
-  field?: any;
-  // { "status": "Active" } → WHERE status = 'Active'
-
-  // Comparison operators
-  $gt?: any;   // Greater than
-  $gte?: any;  // Greater than or equal
-  $lt?: any;   // Less than
-  $lte?: any;  // Less than or equal
-  $ne?: any;   // Not equal
-  $in?: any[]; // In array
-  $nin?: any[]; // Not in array
-  $like?: string; // LIKE pattern
-  $ilike?: string; // Case-insensitive LIKE
-
-  // Logical operators
-  $and?: FilterConfig[];
-  $or?: FilterConfig[];
-  $not?: FilterConfig;
-}
-
-// Examples:
-{
-  "filter": {
-    "status": "Active",
-    "xp": { "$gte": 100 },
-    "created_at": { "$gte": "-30d" }  // Relative date
-  }
-}
-
-{
-  "filter": {
-    "$or": [
-      { "role": "admin" },
-      { "xp": { "$gte": 1000 } }
-    ]
-  }
-}
-```
-
-### Sort Syntax
-
-```typescript
-interface SortConfig {
-  field: string;
-  order: 'asc' | 'desc';
-}
-
-// In transform:
-{
-  "operation": "sort",
-  "params": {
-    "by": [
-      { "field": "xp", "order": "desc" },
-      { "field": "created_at", "order": "asc" }
-    ]
-  }
-}
-```
-
-### Group & Aggregate
-
-```typescript
-// Group users by room and count
-{
-  "operation": "group",
-  "params": {
-    "by": "room_id",
-    "aggregations": [
-      { "field": "id", "function": "count", "as": "user_count" },
-      { "field": "xp", "function": "sum", "as": "total_xp" },
-      { "field": "xp", "function": "avg", "as": "avg_xp" }
-    ]
-  }
-}
-
-// Available aggregation functions:
-// count, sum, avg, min, max, first, last
-```
-
-### Merge (Join) Data Sources
-
-```typescript
-// Join user stats with users
-{
-  "data_pipeline": [
-    {
-      "id": "users",
-      "connector": "users",
-      "filter": { "status": "Active" }
-    },
-    {
-      "id": "stats",
-      "connector": "user_engagement",
-      "transform": [
-        {
-          "operation": "merge",
-          "params": {
-            "with": "users",
-            "on": { "left": "user_id", "right": "id" },
-            "type": "left"  // left, inner, outer
-          }
-        }
-      ]
-    }
-  ]
-}
-```
-
-### Map (Transform)
-
-```typescript
-// Extract and rename fields
-{
-  "operation": "map",
-  "params": {
-    "fields": {
-      "name": "{{first_name}} {{last_name}}",
-      "email": "email",
-      "engagement_score": "{{xp * 0.1 + posts_count * 5}}"
-    }
-  }
-}
-```
-
-### Example: Complex Data Pipeline
-
-```json
-{
-  "data_pipeline": [
-    {
-      "id": "active_users",
-      "connector": "users",
-      "filter": {
-        "status": "Active",
-        "created_at": { "$gte": "-30d" }
-      },
-      "transform": [
-        {
-          "operation": "sort",
-          "params": { "by": [{ "field": "xp", "order": "desc" }] }
-        },
-        {
-          "operation": "limit",
-          "params": { "count": 100 }
-        }
-      ]
-    },
-    {
-      "id": "user_stats",
-      "connector": "user_engagement",
-      "transform": [
-        {
-          "operation": "merge",
-          "params": {
-            "with": "active_users",
-            "on": { "left": "user_id", "right": "id" }
-          }
-        },
-        {
-          "operation": "filter",
-          "params": {
-            "posts_this_week": { "$gte": 1 }
-          }
-        }
-      ]
-    }
-  ]
-}
-```
+The goal is to let AI compose robust pipelines without needing custom code.
 
 ---
 
 ## Action Executors
 
 Actions are side-effect operations or control-flow blocks. Each action type has:
-- Parameter validation
-- Execution logic
-- Structured result output (for downstream steps or logs)
-- Optional `on_failure` compensating action
+- parameter validation
+- execution logic
+- structured result output (for downstream steps or logs)
 
-### Available Actions by Category
+**Proposed v1 scope (starting set):**
+- Communication: `send_email`, `send_notification` (and/or `send_push` if already supported)
+- Content: `create_post`
+- Users: `award_xp`, `update_user`
+- Flow control: `for_each`, `condition`, `request_approval`
+- Integrations (only if configured): `klaviyo.sync_profile`, `klaviyo.add_to_list`
+
+### Available Actions
 
 | Category | Actions |
 |----------|---------|
@@ -2199,707 +1229,30 @@ Actions are side-effect operations or control-flow blocks. Each action type has:
 | **Files** | generate_pdf, resize_image |
 | **Compensate** | on_failure (wrapper for any action) |
 
-### Action Details
-
-#### Communication Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `send_email` | to, subject, body, template?, from? | Send email via SendGrid |
-| `send_notification` | to (user_ids or "admins"), title, message | In-app notification |
-| `send_push` | to, title, body, data? | Push notification to mobile/browser |
-
-#### Content Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `create_post` | room_id, content, author_id, title?, is_pinned? | Create a post in a room |
-| `update_post` | post_id, fields | Update existing post fields |
-| `delete_post` | post_id, reason? | Soft-delete a post |
-| `flag_post` | post_id, reason, set_status? | Flag post for review |
-| `create_comment` | post_id, content, author_id | Add comment to post |
-
-#### User Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `update_user` | user_id, fields | Update user profile fields |
-| `award_xp` | user_id, amount, reason | Give XP to user |
-| `award_badge` | user_id, badge_id, reason? | Award badge to user |
-| `update_engagement_score` | user_id, delta, reason | Adjust engagement score |
-| `connect_wallet` | user_id, wallet_address, chain_id | Link Web3 wallet |
-
-#### Mission Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `create_mission` | title, description, xp, mission_type, room_id? | Create a new mission |
-| `complete_mission` | mission_id, user_id | Mark mission as completed |
-| `assign_mission` | mission_id, user_ids | Assign mission to users |
-| `expire_mission` | mission_id, reason? | Force-expire a mission |
-
-#### Contribution Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `create_contribution` | user_id, type, metadata | Create contribution record |
-| `complete_contribution` | contribution_id | Mark contribution complete |
-| `award_contribution_xp` | contribution_id, amount | Award XP for contribution |
-
-#### Campaign Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `start_campaign` | campaign_id | Activate a campaign |
-| `end_campaign` | campaign_id | End campaign and finalize |
-| `select_winners` | campaign_id, count, criteria? | Select campaign winners |
-
-#### NFT/Web3 Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `mint_nft_badge` | badge_id, user_id, wallet_address, chain_id | Mint NFT badge to user |
-| `transfer_token` | from_wallet, to_wallet, amount, token_address | Transfer tokens |
-| `verify_wallet` | user_id, wallet_address, signature | Verify wallet ownership |
-| `check_token_balance` | wallet_address, token_address, min_balance | Check token balance gate |
-
-#### Gamification Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `start_streak` | user_id, streak_type | Start a new streak |
-| `extend_streak` | user_id, streak_type | Extend existing streak by 1 day |
-| `reset_streak` | user_id, streak_type, reason | Reset streak (user lost it) |
-| `award_milestone` | user_id, milestone_id, xp? | Award milestone achievement |
-
-#### Room Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `add_to_room` | user_id, room_id, role? | Add user to room |
-| `remove_from_room` | user_id, room_id, reason? | Remove user from room |
-| `grant_room_access` | user_id, room_id, access_level | Grant specific room access |
-
-#### State Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `set_state` | key, value | Store key-value for this app |
-| `get_state` | key, output_var | Retrieve stored value |
-| `delete_state` | key | Remove stored value |
-
-#### Flow Control Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `for_each` | items, as, do (nested actions) | Loop over items |
-| `condition` | if (expression), then, else? | Conditional branching |
-| `request_approval` | action_preview, timeout_days?, approvers? | Pause for admin approval |
-| `emit_event` | event_name, payload | Emit custom event (for app chaining) |
-
-#### AI Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `ai_analyze` | input, prompt, output_var | AI analysis of content |
-| `ai_generate` | prompt, output_var, max_tokens? | AI content generation |
-| `ai_classify` | input, categories, output_var | AI classification |
-
-#### Klaviyo Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `klaviyo.sync_profile` | user_id, properties? | Sync user to Klaviyo |
-| `klaviyo.add_to_list` | list_id, email | Add to Klaviyo list |
-| `klaviyo.trigger_flow` | flow_id, email, properties? | Trigger Klaviyo flow |
-| `klaviyo.track_event` | event_name, email, properties | Track Klaviyo event |
-
-#### External Integration Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `webhook_call` | url, method, body?, headers? | Call external URL |
-| `slack.send_message` | channel, message, blocks? | Send Slack message |
-| `discord.send_message` | channel_id, message, embeds? | Send Discord message |
-| `mailchimp.add_subscriber` | list_id, email, merge_fields? | Add Mailchimp subscriber |
-| `twilio.send_sms` | to, body | Send SMS via Twilio |
-
-#### File Actions
-
-| Action | Parameters | Description |
-|--------|------------|-------------|
-| `generate_pdf` | template, data, output_var | Generate PDF from template |
-| `resize_image` | image_url, width, height, output_var | Resize image |
-
-### Compensating Actions (on_failure)
-
-Any action can include an `on_failure` block that executes if the primary action fails. This enables rollback/compensation patterns:
-
-```json
-{
-  "type": "award_xp",
-  "params": {
-    "user_id": "{{user.id}}",
-    "amount": 100,
-    "reason": "Mission completed"
-  },
-  "on_failure": {
-    "type": "send_notification",
-    "params": {
-      "to": ["admins"],
-      "title": "XP Award Failed",
-      "message": "Failed to award XP to {{user.email}}: {{error.message}}"
-    }
-  }
-}
-```
-
-**Use Cases for Compensating Actions:**
-- Notify admins when critical actions fail
-- Revert partial changes (e.g., if NFT mint fails after XP awarded, revoke the XP)
-- Log failures to external systems
-- Trigger alternative workflows
-
-### Action Interface
-
-```typescript
-interface ActionExecutor {
-  type: string;
-
-  // Execute the action
-  execute(
-    params: Record<string, any>,
-    context: ExecutionContext
-  ): Promise<ActionResult>;
-
-  // Validate parameters
-  validateParams(params: Record<string, any>): ValidationResult;
-}
-
-interface ExecutionContext {
-  connection: Connection;       // Tenant database
-  variables: Record<string, any>; // Data from pipeline
-  trigger_data: any;            // Data from trigger event
-  app: App;                     // App configuration
-}
-```
-
-### Webhook Security
-
-The `webhook` action calls external URLs, which requires strict security controls to prevent SSRF (Server-Side Request Forgery) and other attacks.
-
-#### URL Allowlist
-
-Webhooks can only call pre-approved domains:
-
-```typescript
-interface WebhookConfig {
-  // Tenant-level allowlist (set by admin)
-  allowed_domains: string[];  // e.g., ["api.slack.com", "hooks.zapier.com"]
-
-  // Global blocklist (always enforced)
-  blocked_patterns: string[]; // Internal IPs, localhost, cloud metadata
-}
-
-// Default blocked patterns (cannot be overridden):
-const BLOCKED_PATTERNS = [
-  '127.0.0.1', 'localhost', '0.0.0.0',
-  '10.*', '172.16.*', '172.17.*', '172.18.*', '172.19.*',
-  '172.20.*', '172.21.*', '172.22.*', '172.23.*', '172.24.*',
-  '172.25.*', '172.26.*', '172.27.*', '172.28.*', '172.29.*',
-  '172.30.*', '172.31.*', '192.168.*',
-  '169.254.169.254',  // AWS metadata
-  'metadata.google.internal',  // GCP metadata
-];
-```
-
-#### Webhook Action Security
-
-<details>
-<summary>View Webhook Security Implementation</summary>
-
-```typescript
-class WebhookAction implements ActionExecutor {
-  async execute(params: WebhookParams, context: ExecutionContext) {
-    const { url, method, body, headers } = params;
-
-    // 1. Validate URL against allowlist
-    const domain = new URL(url).hostname;
-    if (!this.isAllowed(domain, context.tenant_id)) {
-      throw new AppExecutionError(
-        `Domain "${domain}" not in webhook allowlist. ` +
-        `Add it in Settings > Webhook Domains.`
-      );
-    }
-
-    // 2. Block internal/private IPs
-    if (this.isBlocked(url)) {
-      throw new AppExecutionError('URL blocked for security reasons');
-    }
-
-    // 3. Enforce timeout
-    const response = await this.httpClient.request({
-      url,
-      method: method || 'POST',
-      data: body,
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'Decommerce-App-Framework/1.0',
-        ...headers,
-      },
-      timeout: WEBHOOK_TIMEOUT_MS,  // 30 seconds max
-    });
-
-    // 4. Don't follow redirects to blocked URLs
-    if (response.redirected && this.isBlocked(response.url)) {
-      throw new AppExecutionError('Redirect to blocked URL');
-    }
-
-    return { status: response.status, body: response.data };
-  }
-}
-```
-
-</details>
-
-#### Webhook Limits
-
-| Limit | Value | Description |
-|-------|-------|-------------|
-| `WEBHOOK_TIMEOUT_MS` | 30,000 | Max time to wait for response |
-| `WEBHOOK_MAX_RETRIES` | 2 | Retry attempts on failure |
-| `WEBHOOK_MAX_BODY_SIZE` | 1 MB | Maximum request body size |
-| `WEBHOOK_RATE_LIMIT` | 100/hour | Max webhook calls per tenant per hour |
-
-#### Webhook Logging
-
-All webhook calls are logged for audit:
-
-```typescript
-interface WebhookLog {
-  app_id: number;
-  execution_id: number;
-  url: string;
-  method: string;
-  status_code: number;
-  response_time_ms: number;
-  success: boolean;
-  error?: string;
-  timestamp: Date;
-}
-```
-
----
-
-## UI Widgets
-
-Apps can generate UI widgets for display in the admin panel or community dashboard. Widgets provide real-time visibility into metrics and activity.
-
-### Available Widget Types
-
-| Widget Type | Description | Decommerce Example |
-|-------------|-------------|-------------------|
-| `stat_card` | Single metric with label | "Missions Completed Today: 47" |
-| `leaderboard` | Top N users table | "Top 10 XP Earners This Week" |
-| `chart_line` | Time series chart | "Daily Active Users (30 days)" |
-| `chart_bar` | Bar chart | "Missions by Type (Trivia, Hangman, Survey)" |
-| `table` | Data table with columns | "Recent Reward Claims" |
-| `progress_ring` | Circular progress indicator | "Campaign Progress: 73% Complete" |
-| `activity_feed` | Recent events stream | "Live Mission Completions" |
-
-### Widget Configuration Schema
-
-```typescript
-interface WidgetConfig {
-  type: WidgetType;
-  title: string;
-  description?: string;
-  data_source: DataSourceConfig;
-  refresh_interval?: number;  // seconds, default: 300 (5 min)
-  display?: DisplayOptions;
-}
-
-interface DataSourceConfig {
-  connector: string;       // Data connector to use
-  filter?: Record<string, any>;
-  sort?: { field: string; order: 'asc' | 'desc' };
-  limit?: number;
-}
-
-interface DisplayOptions {
-  // For stat_card
-  format?: 'number' | 'currency' | 'percentage';
-  trend?: boolean;        // Show up/down arrow compared to previous period
-
-  // For leaderboard
-  columns?: string[];     // Which fields to show
-  show_rank?: boolean;
-
-  // For charts
-  x_axis?: string;        // Field for X axis
-  y_axis?: string;        // Field for Y axis
-  color?: string;
-}
-```
-
-### Widget Examples
-
-**Stat Card: Daily Mission Completions**
-
-```json
-{
-  "type": "stat_card",
-  "title": "Missions Completed Today",
-  "data_source": {
-    "connector": "contributions",
-    "filter": {
-      "type": "mission",
-      "completed_at": { "gte": "{{today}}" }
-    }
-  },
-  "display": {
-    "format": "number",
-    "trend": true
-  }
-}
-```
-
-**Leaderboard: Top XP Earners**
-
-```json
-{
-  "type": "leaderboard",
-  "title": "Top 10 XP Earners This Week",
-  "data_source": {
-    "connector": "users",
-    "filter": { "xp_earned_this_week": { "gt": 0 } },
-    "sort": { "field": "xp_earned_this_week", "order": "desc" },
-    "limit": 10
-  },
-  "display": {
-    "columns": ["rank", "name", "avatar", "xp_earned_this_week"],
-    "show_rank": true
-  }
-}
-```
-
-**Progress Ring: Campaign Progress**
-
-```json
-{
-  "type": "progress_ring",
-  "title": "Summer Campaign Progress",
-  "data_source": {
-    "connector": "campaigns",
-    "filter": { "id": "{{campaign_id}}" }
-  },
-  "display": {
-    "value_field": "missions_completed",
-    "max_field": "missions_total",
-    "color": "#4CAF50"
-  }
-}
-```
-
-### Widget Placement
-
-Widgets can be rendered in multiple locations:
-
-| Location | Description |
-|----------|-------------|
-| Admin Dashboard | Main admin panel overview |
-| App Detail Page | Specific to one app's output |
-| Community Dashboard | Public-facing community page |
-| Room Sidebar | Contextual widgets for specific rooms |
-
----
-
-## Native OAuth Integrations
-
-Like WordPress plugins can connect to external services, micro-apps support native OAuth integrations with popular third-party platforms. We build direct API connections—everything stays within the Decommerce admin panel.
-
-### Connectivity Tiers
-
-| Tier | What It Is | Examples |
-|------|------------|----------|
-| **Core Actions** | Platform-built actions for Decommerce operations | award_xp, create_post, send_email, mint_nft_badge |
-| **Native OAuth** | Direct API connections to external services | HubSpot, Google Sheets, Salesforce, Airtable |
-
-### How OAuth Integrations Work
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 1. Admin: Settings → Integrations → Connect [Service]          │
-│                           ↓                                     │
-│ 2. Redirect to service login (e.g., HubSpot OAuth page)        │
-│                           ↓                                     │
-│ 3. Admin authorizes Decommerce to access their account         │
-│                           ↓                                     │
-│ 4. Platform stores encrypted OAuth tokens securely             │
-│                           ↓                                     │
-│ 5. Micro-apps can now use actions like `hubspot.create_contact`│
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Integration Roadmap
-
-| Service | Actions | Phase |
-|---------|---------|-------|
-| **Klaviyo** ✅ | sync_profile, add_to_list, trigger_flow, track_event | v1 (exists) |
-| **HubSpot** | create_contact, update_contact, add_to_list, update_deal | Phase 2 |
-| **Google Sheets** | append_row, read_range, update_cell, create_sheet | Phase 2 |
-| **Salesforce** | create_lead, update_opportunity, sync_contact | Phase 3 |
-| **Airtable** | create_record, update_record, query_records | Phase 3 |
-| **Notion** | create_page, update_database, query_database | Phase 3 |
-
-### Why Native OAuth (Not Zapier/Middleware)
-
-- **Simpler architecture**: One system to manage, not two
-- **Better UX**: Everything in the Decommerce admin panel
-- **No extra cost**: Users don't need additional subscriptions
-- **More control**: We own the integration quality and can optimize for Decommerce use cases
-
-### OAuth Integration Architecture
-
-```typescript
-// Tenant settings include encrypted OAuth tokens
-interface TenantIntegrationSettings {
-  integrations: {
-    [service: string]: {
-      connected: boolean;
-      connected_at: Date;
-      connected_by: number;  // user_id
-      access_token_encrypted: string;
-      refresh_token_encrypted: string;
-      token_expires_at: Date;
-      scopes: string[];
-    };
-  };
-}
-
-// OAuth service handles token refresh
-@Injectable()
-export class OAuthService {
-  async getValidToken(tenantId: string, service: string): Promise<string> {
-    const settings = await this.getTenantIntegration(tenantId, service);
-
-    if (settings.token_expires_at < new Date()) {
-      return this.refreshToken(tenantId, service);
-    }
-
-    return this.decrypt(settings.access_token_encrypted);
-  }
-
-  async refreshToken(tenantId: string, service: string): Promise<string> {
-    const refreshToken = this.decrypt(settings.refresh_token_encrypted);
-    const newTokens = await this.oauthClient[service].refresh(refreshToken);
-
-    await this.updateTenantIntegration(tenantId, service, {
-      access_token_encrypted: this.encrypt(newTokens.access_token),
-      refresh_token_encrypted: this.encrypt(newTokens.refresh_token),
-      token_expires_at: newTokens.expires_at,
-    });
-
-    return newTokens.access_token;
-  }
-}
-```
-
-### Integration Settings UI
-
-Admins manage connected services in Settings → Integrations:
-
-| Feature | Description |
-|---------|-------------|
-| View connected accounts | See which services are connected and their status |
-| Connection status | Active, expired, or disconnected indicators |
-| Disconnect/reconnect | Revoke access or re-authenticate |
-| Usage metrics | API calls made per integration |
-| Token management | Automatic refresh handled by platform |
+### Webhook security requirements
+Webhook calls will be constrained with:
+- allowlisted domains (tenant-level)
+- blocked internal/private networks and cloud metadata targets
+- strict timeouts
+- redirect safety checks
+- request/response logging for audit
+- call quotas to prevent abuse
 
 ---
 
 ## Triggers System
 
-### Trigger Types
+### Trigger types
+- **scheduled**: cron-based scheduler triggers execution.
+- **event**: platform emits events; event listener triggers matching apps.
+- **manual**: admin requests run.
+- **delayed**: on an event, schedule one or more future executions at specified delays, with optional conditions per delay.
 
-| Type | Description | Configuration |
-|------|-------------|---------------|
-| `scheduled` | Cron-based | `{ cron: "0 9 * * MON", timezone: "UTC" }` |
-| `event` | On platform event | `{ event: "user.created", filter?: {...} }` |
-| `delayed` | Event + delay | `{ event: "user.created", delays: ["1d", "3d", "7d"] }` |
-| `manual` | Admin clicks "Run" | `{}` |
-
-### Delayed Trigger (for Welcome Series)
-
-The `delayed` trigger is specifically designed for multi-step sequences like welcome email series. It fires at specified intervals after an event occurs.
-
-**Use case:** Send welcome emails on Day 1, Day 3, and Day 7 after signup.
-
-```typescript
-interface DelayedTriggerConfig {
-  type: 'delayed';
-  event: EventType;           // Base event to trigger the sequence
-  delays: DelaySpec[];        // When to execute after the event
-  filter?: Record<string, any>; // Optional filter on the event
-}
-
-type DelaySpec = string | {
-  delay: string;              // e.g., "1d", "3d", "7d", "24h", "30m"
-  condition?: ConditionConfig; // Optional: only run if condition met
-};
-
-// Examples:
-// "1d" = 1 day after event
-// "3d" = 3 days after event
-// "7d" = 7 days after event
-// "24h" = 24 hours after event
-// "30m" = 30 minutes after event
-```
-
-**Example: Welcome Email Series**
-
-```json
-{
-  "app": {
-    "name": "New User Welcome Series",
-    "description": "3-email series for new users"
-  },
-  "trigger": {
-    "type": "delayed",
-    "event": "user.created",
-    "delays": [
-      { "delay": "1d", "condition": null },
-      { "delay": "3d", "condition": { "field": "user.is_active", "operator": "equals", "value": true } },
-      { "delay": "7d", "condition": { "field": "user.missions_completed", "operator": "less_than", "value": 3 } }
-    ]
-  },
-  "data_pipeline": [
-    {
-      "id": "user",
-      "connector": "users",
-      "filter": { "id": "{{trigger.user_id}}" }
-    }
-  ],
-  "actions": [
-    {
-      "type": "ai_generate",
-      "params": {
-        "prompt": "Write welcome email #{{trigger.delay_index}} for {{user.first_name}}",
-        "output_var": "email_body"
-      }
-    },
-    {
-      "type": "send_email",
-      "params": {
-        "to": "{{user.email}}",
-        "subject": "{{trigger.delay_index == 0 ? 'Welcome!' : trigger.delay_index == 1 ? 'How are you doing?' : 'We miss you!'}}",
-        "body": "{{email_body}}"
-      }
-    }
-  ]
-}
-```
-
-**How Delayed Triggers Work:**
-
-<details>
-<summary>View Delayed Trigger Implementation</summary>
-
-```typescript
-@Entity('delayed_executions')
-export class DelayedExecution {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @ManyToOne(() => App)
-  app: App;
-
-  @Column({ type: 'jsonb' })
-  trigger_data: any;  // Original event data
-
-  @Column({ type: 'int' })
-  delay_index: number;  // Which delay in the sequence (0, 1, 2...)
-
-  @Column({ type: 'timestamp' })
-  scheduled_for: Date;  // When to execute
-
-  @Column({ type: 'enum', enum: DelayedStatus })
-  status: DelayedStatus;  // PENDING, EXECUTED, CANCELLED, SKIPPED
-}
-
-@Injectable()
-export class DelayedTriggerService {
-  // Called when base event fires
-  async scheduleDelayedExecutions(app: App, eventPayload: any) {
-    const { delays } = app.config.trigger;
-    const baseTime = new Date();
-
-    for (let i = 0; i < delays.length; i++) {
-      const delay = delays[i];
-      const scheduledFor = this.addDelay(baseTime, delay.delay || delay);
-
-      await this.delayedExecutionRepo.save({
-        app,
-        trigger_data: { ...eventPayload, delay_index: i },
-        delay_index: i,
-        scheduled_for: scheduledFor,
-        status: DelayedStatus.PENDING,
-      });
-    }
-  }
-
-  // Cron job runs every minute to check for due executions
-  @Cron('* * * * *')
-  async processDelayedExecutions() {
-    const dueExecutions = await this.delayedExecutionRepo.find({
-      where: {
-        scheduled_for: LessThanOrEqual(new Date()),
-        status: DelayedStatus.PENDING,
-      },
-    });
-
-    for (const execution of dueExecutions) {
-      // Check condition if specified
-      const delay = execution.app.config.trigger.delays[execution.delay_index];
-      if (delay.condition) {
-        const conditionMet = await this.evaluateCondition(
-          delay.condition,
-          execution.trigger_data
-        );
-        if (!conditionMet) {
-          execution.status = DelayedStatus.SKIPPED;
-          await this.delayedExecutionRepo.save(execution);
-          continue;
-        }
-      }
-
-      // Execute the app
-      await this.appExecutorService.execute(execution.app, {
-        trigger_data: execution.trigger_data,
-      });
-
-      execution.status = DelayedStatus.EXECUTED;
-      await this.delayedExecutionRepo.save(execution);
-    }
-  }
-}
-```
-
-</details>
-
-**Cancellation:** If the user completes a specific action (like making a purchase), you can cancel remaining delayed executions:
-
-```typescript
-// Cancel remaining welcome emails if user becomes highly engaged
-await delayedTriggerService.cancelPendingExecutions(app.id, user_id);
-```
+**Proposed v1 scope (starting set):**
+- Trigger types: `manual`, `scheduled`, `event` (delayed can be v1.5 if scheduling infra isn’t ready)
+- Events: `user.created`, `mission.completed`, `post.created`, `room.member_joined`, `shopify.order.created`
 
 ### Available Events
-
-Events are organized by category and can be used as triggers for micro-apps.
-
-#### Events by Category
 
 | Category | Event Names |
 |----------|-------------|
@@ -2916,962 +1269,164 @@ Events are organized by category and can be used as triggers for micro-apps.
 | **Shopify** | shopify.order.created, shopify.order.fulfilled, shopify.customer.created |
 | **Custom** | Any event emitted by another app via `emit_event` action |
 
-#### Event Payload Reference
+### Trigger Filtering
 
-| Event | Fires When | Payload |
-|-------|------------|---------|
-| `user.created` | New user signs up | `{ user_id, email, source }` |
-| `user.updated` | User profile updated | `{ user_id, changed_fields }` |
-| `user.deleted` | User account deleted | `{ user_id, email }` |
-| `user.login` | User logs in | `{ user_id, ip_address, device }` |
-| `user.wallet_connected` | User connects Web3 wallet | `{ user_id, wallet_address, chain_id }` |
-| `post.created` | New post created | `{ post_id, author_id, room_id, content_preview }` |
-| `post.updated` | Post edited | `{ post_id, author_id, changed_fields }` |
-| `post.deleted` | Post deleted | `{ post_id, author_id, reason }` |
-| `post.flagged` | Post reported/flagged | `{ post_id, reporter_id, reason }` |
-| `comment.created` | New comment on post | `{ comment_id, post_id, author_id }` |
-| `mission.created` | New mission created | `{ mission_id, title, xp_reward, room_id }` |
-| `mission.completed` | User completes mission | `{ user_id, mission_id, xp_earned }` |
-| `mission.expired` | Mission deadline passed | `{ mission_id, affected_users }` |
-| `mission.assigned` | Mission assigned to user | `{ mission_id, user_id }` |
-| `contribution.created` | New contribution started | `{ contribution_id, user_id, type }` |
-| `contribution.completed` | Contribution completed | `{ contribution_id, user_id, xp_earned }` |
-| `contribution.expired` | Contribution expired | `{ contribution_id, user_id }` |
-| `reward.claimed` | User claims reward | `{ user_id, contribution_id, reward_type }` |
-| `xp.awarded` | XP awarded to user | `{ user_id, amount, reason, source }` |
-| `badge.earned` | User earns badge | `{ user_id, badge_id, badge_name }` |
-| `milestone.reached` | User reaches XP milestone | `{ user_id, milestone_id, xp_total }` |
-| `campaign.started` | Campaign begins | `{ campaign_id, title, start_date }` |
-| `campaign.ended` | Campaign ends | `{ campaign_id, title, end_date }` |
-| `campaign.winner_selected` | Campaign winner chosen | `{ campaign_id, winner_ids }` |
-| `nft_badge.minted` | NFT badge minted | `{ user_id, badge_id, token_id, tx_hash }` |
-| `nft_badge.claimed` | NFT badge claimed | `{ user_id, badge_id, token_id }` |
-| `nft_badge.transferred` | NFT badge transferred | `{ from_user, to_user, token_id }` |
-| `streak.started` | User starts streak | `{ user_id, streak_type }` |
-| `streak.extended` | Streak extended by 1 day | `{ user_id, streak_type, days_count }` |
-| `streak.broken` | Streak lost | `{ user_id, streak_type, final_count }` |
-| `hangman.completed` | Hangman game finished | `{ user_id, mission_id, won, attempts }` |
-| `trivia.completed` | Trivia game finished | `{ user_id, mission_id, score, correct_answers }` |
-| `spin_wheel.completed` | Spin wheel used | `{ user_id, mission_id, prize }` |
-| `survey.completed` | Survey completed | `{ user_id, mission_id, responses }` |
-| `room.created` | New room created | `{ room_id, creator_id, room_type }` |
-| `room.member_joined` | User joins room | `{ user_id, room_id }` |
-| `room.member_left` | User leaves room | `{ user_id, room_id, reason }` |
-| `room.access_requested` | User requests room access | `{ user_id, room_id }` |
-| `shopify.order.created` | New Shopify order | `{ order_id, customer_email, total, currency }` |
-| `shopify.order.fulfilled` | Order fulfilled | `{ order_id, customer_email, tracking_number }` |
-| `shopify.customer.created` | New Shopify customer | `{ customer_id, email, tenant_id }` |
-| Custom event | App emits custom event | User-defined payload via `emit_event` |
+Event triggers can include filters to restrict which events qualify.
 
-### Trigger Filter Syntax
-
-Event triggers can include filters to only fire for specific events. This prevents apps from running on every event.
-
-#### Basic Filter Syntax
-
-```typescript
-interface EventTriggerConfig {
-  type: 'event';
-  event: EventType;
-  filter?: TriggerFilterConfig;
-}
-
-interface TriggerFilterConfig {
-  // Match payload fields
-  [field: string]: any | FilterOperator;
-}
-```
-
-#### Examples
-
-**1. Only trigger for posts in a specific room:**
-
-```json
-{
-  "trigger": {
-    "type": "event",
-    "event": "post.created",
-    "filter": {
-      "room_id": 42
-    }
-  }
-}
-```
-
-**2. Only trigger for high-value Shopify orders:**
-
-```json
-{
-  "trigger": {
-    "type": "event",
-    "event": "shopify.order.created",
-    "filter": {
-      "total": { "$gte": 100 }
-    }
-  }
-}
-```
-
-**3. Only trigger for users with verified email domain:**
-
-```json
-{
-  "trigger": {
-    "type": "event",
-    "event": "user.created",
-    "filter": {
-      "email": { "$like": "%@company.com" }
-    }
-  }
-}
-```
-
-**4. Complex filter with OR condition:**
-
-```json
-{
-  "trigger": {
-    "type": "event",
-    "event": "mission.completed",
-    "filter": {
-      "$or": [
-        { "xp_earned": { "$gte": 100 } },
-        { "mission_id": { "$in": [1, 2, 3] } }
-      ]
-    }
-  }
-}
-```
-
-#### Available Filter Operators
+#### Filter Operators
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `$eq` | Equals (default) | `{ "status": "Active" }` |
-| `$ne` | Not equals | `{ "status": { "$ne": "Deleted" } }` |
-| `$gt` | Greater than | `{ "total": { "$gt": 50 } }` |
-| `$gte` | Greater than or equal | `{ "xp": { "$gte": 100 } }` |
-| `$lt` | Less than | `{ "age": { "$lt": 18 } }` |
-| `$lte` | Less than or equal | `{ "items": { "$lte": 5 } }` |
-| `$in` | In array | `{ "room_id": { "$in": [1, 2, 3] } }` |
-| `$nin` | Not in array | `{ "status": { "$nin": ["Banned", "Deleted"] } }` |
-| `$like` | SQL LIKE | `{ "email": { "$like": "%@gmail.com" } }` |
-| `$exists` | Field exists | `{ "shopify_id": { "$exists": true } }` |
-| `$and` | All conditions match | `{ "$and": [{...}, {...}] }` |
-| `$or` | Any condition matches | `{ "$or": [{...}, {...}] }` |
-
-#### Filter Evaluation
-
-<details>
-<summary>View Filter Evaluation Code</summary>
-
-```typescript
-class TriggerFilterEvaluator {
-  matches(filter: TriggerFilterConfig, payload: any): boolean {
-    for (const [field, condition] of Object.entries(filter)) {
-      // Handle logical operators
-      if (field === '$and') {
-        return condition.every(c => this.matches(c, payload));
-      }
-      if (field === '$or') {
-        return condition.some(c => this.matches(c, payload));
-      }
-
-      // Get payload value
-      const value = this.getNestedValue(payload, field);
-
-      // Simple equality
-      if (typeof condition !== 'object' || condition === null) {
-        if (value !== condition) return false;
-        continue;
-      }
-
-      // Operator-based comparison
-      if (!this.evaluateOperator(value, condition)) return false;
-    }
-    return true;
-  }
-
-  private evaluateOperator(value: any, operators: Record<string, any>): boolean {
-    for (const [op, expected] of Object.entries(operators)) {
-      switch (op) {
-        case '$eq': if (value !== expected) return false; break;
-        case '$ne': if (value === expected) return false; break;
-        case '$gt': if (value <= expected) return false; break;
-        case '$gte': if (value < expected) return false; break;
-        case '$lt': if (value >= expected) return false; break;
-        case '$lte': if (value > expected) return false; break;
-        case '$in': if (!expected.includes(value)) return false; break;
-        case '$nin': if (expected.includes(value)) return false; break;
-        case '$like': if (!this.matchLike(value, expected)) return false; break;
-        case '$exists': if ((value !== undefined) !== expected) return false; break;
-      }
-    }
-    return true;
-  }
-}
-```
-
-</details>
-
-### Shopify Webhook Integration
-
-Shopify events reach the App Framework through the existing Shopify webhook integration. Here's how it works:
-
-```
-Shopify Store → Webhook → Decommerce Backend → App Framework → Micro-App
-```
-
-#### Shopify Webhook Registration
-
-When a tenant connects their Shopify store, Decommerce automatically registers webhooks:
-
-```typescript
-// Registered Shopify webhooks:
-const SHOPIFY_WEBHOOKS = [
-  'orders/create',       // → shopify.order.created
-  'orders/fulfilled',    // → shopify.order.fulfilled
-  'orders/cancelled',    // → shopify.order.cancelled
-  'products/create',     // → shopify.product.created
-  'products/update',     // → shopify.product.updated
-  'customers/create',    // → shopify.customer.created
-  'carts/create',        // → shopify.cart.created (for abandoned cart)
-  'carts/update',        // → shopify.cart.updated
-];
-```
-
-#### Webhook Handler
-
-The existing Shopify controller receives webhooks and translates them to platform events:
-
-<details>
-<summary>View Shopify Webhook Handler</summary>
-
-```typescript
-@Controller('webhooks/shopify')
-export class ShopifyWebhookController {
-  @Post(':tenant_id')
-  @ShopifyHmacVerified()  // Verify Shopify signature
-  async handleWebhook(
-    @Param('tenant_id') tenant_id: string,
-    @Headers('X-Shopify-Topic') topic: string,
-    @Body() payload: any,
-  ) {
-    // Map Shopify topic to platform event
-    const eventMap = {
-      'orders/create': 'shopify.order.created',
-      'orders/fulfilled': 'shopify.order.fulfilled',
-      // ...
-    };
-
-    const eventType = eventMap[topic];
-    if (!eventType) return;
-
-    // Transform payload to normalized format
-    const eventPayload = this.transformPayload(topic, payload, tenant_id);
-
-    // Emit platform event (picked up by App Framework)
-    this.eventEmitter.emit(eventType, eventPayload);
-  }
-
-  private transformPayload(topic: string, shopifyPayload: any, tenant_id: string) {
-    // Normalize Shopify data to platform format
-    if (topic === 'orders/create') {
-      return {
-        tenant_id,
-        order_id: shopifyPayload.id,
-        customer_email: shopifyPayload.customer?.email,
-        customer_name: shopifyPayload.customer?.first_name,
-        total: parseFloat(shopifyPayload.total_price),
-        currency: shopifyPayload.currency,
-        items: shopifyPayload.line_items.map(item => ({
-          product_id: item.product_id,
-          title: item.title,
-          quantity: item.quantity,
-          price: parseFloat(item.price),
-        })),
-        created_at: new Date(shopifyPayload.created_at),
-      };
-    }
-    // ... other transformations
-  }
-}
-```
-
-</details>
-
-#### Matching Shopify Customers to Platform Users
-
-To link Shopify orders to platform users:
-
-```typescript
-class ShopifyConnector {
-  async matchUserByEmail(email: string, tenant_id: string): Promise<User | null> {
-    // Find user by Shopify email
-    return this.userRepository.findOne({
-      where: { email, tenant_id },
-    });
-  }
-}
-
-// In app execution context, the matched user is available:
-{
-  "trigger_data": {
-    "order_id": 12345,
-    "customer_email": "john@example.com",
-    "matched_user": {
-      "id": 789,
-      "first_name": "John",
-      "email": "john@example.com"
-    }
-  }
-}
-```
-
-#### Shopify-Specific Connectors
-
-| Connector | Description | Filters |
-|-----------|-------------|---------|
-| `shopify_orders` | Fetch order history | customer_email, created_after, total_gte |
-| `shopify_products` | Fetch products | product_id, title, collection_id |
-| `shopify_customers` | Fetch Shopify customers | email, created_after |
-
-### Scheduler Implementation
-
-<details>
-<summary>View Scheduler Implementation</summary>
-
-```typescript
-@Injectable()
-export class AppSchedulerService implements OnModuleInit {
-  private scheduledJobs: Map<number, CronJob> = new Map();
-
-  async onModuleInit() {
-    // Load all active scheduled apps
-    const apps = await this.appService.findByTriggerType('scheduled');
-
-    for (const app of apps) {
-      this.scheduleApp(app);
-    }
-  }
-
-  scheduleApp(app: App) {
-    const { cron, timezone } = app.config.trigger;
-
-    const job = new CronJob(cron, async () => {
-      await this.appExecutorService.execute(app);
-    }, null, true, timezone);
-
-    this.scheduledJobs.set(app.id, job);
-  }
-
-  unscheduleApp(appId: number) {
-    const job = this.scheduledJobs.get(appId);
-    if (job) {
-      job.stop();
-      this.scheduledJobs.delete(appId);
-    }
-  }
-}
-```
-
-</details>
-
-### Event Listener Implementation
-
-<details>
-<summary>View Event Listener Implementation</summary>
-
-```typescript
-@Injectable()
-export class AppEventListenerService {
-  @OnEvent('user.created')
-  async handleUserCreated(payload: UserCreatedEvent) {
-    const apps = await this.appService.findByEvent('user.created');
-
-    for (const app of apps) {
-      // Check if filter matches
-      if (this.matchesFilter(app.config.trigger.filter, payload)) {
-        await this.appExecutorService.execute(app, { trigger_data: payload });
-      }
-    }
-  }
-
-  @OnEvent('post.created')
-  async handlePostCreated(payload: PostCreatedEvent) {
-    const apps = await this.appService.findByEvent('post.created');
-
-    for (const app of apps) {
-      if (this.matchesFilter(app.config.trigger.filter, payload)) {
-        await this.appExecutorService.execute(app, { trigger_data: payload });
-      }
-    }
-  }
-
-  // ... handlers for other events
-}
-```
-
-</details>
-
----
-
-## Approval Queues
-
-High-impact actions can require admin approval before executing. The `request_approval` action pauses execution until an admin approves or rejects.
-
-### Approval State Machine
-
-```
-┌─────────┐    ┌─────────────┐    ┌──────────────┐    ┌─────────────┐
-│   App   │───▶│  Execution  │───▶│   request_   │───▶│   PAUSED    │
-│ Trigger │    │   starts    │    │   approval   │    │  (waiting)  │
-└─────────┘    └─────────────┘    └──────────────┘    └──────┬──────┘
-                                                              │
-                                         ┌────────────────────┼────────────────────┐
-                                         │                    │                    │
-                                         ▼                    ▼                    ▼
-                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-                                  │   APPROVE   │      │   REJECT    │      │   TIMEOUT   │
-                                  │ (continue)  │      │  (cancel)   │      │ (7 days)    │
-                                  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘
-                                         │                    │                    │
-                                         ▼                    ▼                    ▼
-                                  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-                                  │  Continue   │      │   Execution │      │   Execution │
-                                  │  execution  │      │   cancelled │      │   cancelled │
-                                  └─────────────┘      └─────────────┘      └─────────────┘
-```
-
-### Request Approval Action
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `action_preview` | object | Yes | What the admin sees (summary of pending action) |
-| `timeout_days` | number | No | Days until auto-reject (default: 7) |
-| `approvers` | string[] | No | User IDs or "admins" (default: "admins") |
-| `notify_channels` | string[] | No | How to notify (email, push, in_app) |
-
-### Example: Mass XP Award Approval
-
-```json
-{
-  "type": "request_approval",
-  "params": {
-    "action_preview": {
-      "action": "award_xp",
-      "description": "Award 500 XP to {{users:count}} users",
-      "details": {
-        "affected_users": "{{users:count}}",
-        "total_xp": "{{users:count * 500}}",
-        "reason": "Weekly challenge winners"
-      }
-    },
-    "timeout_days": 3,
-    "approvers": ["admins"],
-    "notify_channels": ["email", "in_app"]
-  }
-}
-```
-
-### Admin Approval UI
-
-Admins see pending approvals in the Apps dashboard:
-
-| Field | Description |
-|-------|-------------|
-| App Name | Which app requested approval |
-| Action Preview | Summary of what will happen |
-| Requested At | When the approval was requested |
-| Expires At | When it will auto-reject |
-| Actions | Approve, Reject, View Details |
-
-### Approval Entity
-
-```typescript
-@Entity('app_approvals')
-export class AppApproval {
-  @PrimaryGeneratedColumn()
-  id: number;
-
-  @ManyToOne(() => App)
-  app: App;
-
-  @Column({ type: 'int' })
-  execution_id: number;
-
-  @Column({ type: 'jsonb' })
-  action_preview: any;
-
-  @Column({ type: 'enum', enum: ApprovalStatus })
-  status: ApprovalStatus;  // PENDING, APPROVED, REJECTED, TIMEOUT
-
-  @Column({ type: 'timestamp' })
-  expires_at: Date;
-
-  @Column({ type: 'int', nullable: true })
-  decided_by: number;  // user_id of approver
-
-  @Column({ type: 'timestamp', nullable: true })
-  decided_at: Date;
-
-  @Column({ type: 'text', nullable: true })
-  decision_note: string;
-
-  @CreateDateColumn()
-  created_at: Date;
-}
-
-enum ApprovalStatus {
-  PENDING = 'PENDING',
-  APPROVED = 'APPROVED',
-  REJECTED = 'REJECTED',
-  TIMEOUT = 'TIMEOUT',
-}
-```
-
-### When to Use Approval Queues
-
-| Scenario | Why |
-|----------|-----|
-| Mass XP awards (>1000 total XP) | Prevent accidental inflation |
-| NFT minting to many users | High gas cost, irreversible |
-| Sending emails to large lists | Prevent spam, verify content |
-| User role changes | Security-sensitive operation |
-| Campaign winner selection | Ensure fairness, allow review |
-
----
-
-## App Chaining
-
-Apps can communicate with each other through custom events. One app emits an event, and another app listens for it.
-
-### Event Emission Pattern
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         TENANT SCOPE                                │
-│                                                                     │
-│  ┌─────────────┐         emit_event          ┌─────────────┐       │
-│  │    APP A    │────────────────────────────▶│  Event Bus  │       │
-│  │ "Mission    │   "high_achiever"           │             │       │
-│  │  Tracker"   │                             └──────┬──────┘       │
-│  └─────────────┘                                    │              │
-│                                                     │ matches      │
-│                                                     │ trigger      │
-│                                                     ▼              │
-│  ┌─────────────┐                            ┌─────────────┐        │
-│  │    APP B    │◀───────────────────────────│   Trigger   │        │
-│  │ "NFT Badge  │   event: custom.high_achiever              │       │
-│  │  Minter"    │                            └─────────────┘        │
-│  └─────────────┘                                                   │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Emitting Events
-
-```json
-{
-  "type": "emit_event",
-  "params": {
-    "event_name": "high_achiever",
-    "payload": {
-      "user_id": "{{user.id}}",
-      "xp_total": "{{user.xp_total}}",
-      "achievement": "first_1000_xp"
-    }
-  }
-}
-```
-
-### Listening for Custom Events
-
-Custom events are prefixed with `custom.` in the trigger:
-
-```json
-{
-  "trigger": {
-    "type": "event",
-    "event": "custom.high_achiever",
-    "filter": {
-      "achievement": "first_1000_xp"
-    }
-  }
-}
-```
-
-### App Chaining Use Cases
-
-| Scenario | App A | Emits | App B |
-|----------|-------|-------|-------|
-| Milestone celebration | XP Tracker | `milestone_reached` | Badge Minter |
-| Referral rewards | Signup Tracker | `referral_completed` | XP Awarder |
-| Campaign completion | Mission Tracker | `campaign_completed` | Winner Announcer |
-| VIP detection | Purchase Tracker | `vip_threshold_reached` | Room Access Granter |
-
-### Chaining Best Practices
-
-1. **Namespace your events**: Use descriptive names like `mission.streak_achieved` not just `achieved`
-2. **Include sufficient context**: Pass user_id, relevant IDs, and computed values in payload
-3. **Document your events**: Other admins should know what events your apps emit
-4. **Avoid circular chains**: App A triggers App B triggers App A = infinite loop (system prevents this)
+| eq | Equals | status eq "active" |
+| ne | Not equals | role ne "admin" |
+| gt, gte | Greater than (or equal) | age gt 18 |
+| lt, lte | Less than (or equal) | score lte 100 |
+| in | In list | status in ["active", "pending"] |
+| nin | Not in list | type nin ["spam", "deleted"] |
+| contains | String contains | name contains "john" |
+| starts_with | String starts with | email starts_with "admin" |
+| ends_with | String ends with | email ends_with "@company.com" |
+| regex | Regex match | username regex "^user_[0-9]+$" |
+| exists | Field exists | profile_picture exists true |
+| and, or | Logical combinations | (status eq "active") and (role eq "user") |
+
+### Shopify Integration
+
+Shopify webhooks are mapped into normalized platform events that can trigger apps.
+
+#### Customer Matching
+
+When a Shopify event arrives:
+1. Platform looks up community user by **email** (primary key)
+2. If found: Event includes `user_id` for targeting
+3. If NOT found: Event includes `shopify_customer_email` only
+4. App can choose to:
+   - Skip non-community customers (add filter: `user_id exists true`)
+   - Create community user (action: `create_user_from_shopify`)
+   - Send email anyway (use `shopify_customer_email` as recipient)
 
 ---
 
 ## Execution Safeguards
 
-This section defines safeguards to prevent runaway apps, resource exhaustion, and concurrent execution issues.
+### Concurrent execution prevention
+- Each app execution will acquire an execution lock.
+- If locked, a new run is skipped to prevent overlapping execution.
+- Locks will expire to avoid stale lock deadlocks.
 
-### Concurrent Execution Prevention
+### Limits enforcement (how the system stays stable)
 
-An app should not run multiple times simultaneously. This prevents data corruption and resource contention.
+The specific limits live earlier in the doc under **Operational limits (target defaults)**. This section is about the mechanics that make those limits real at runtime:
 
-**Implementation: Execution Lock**
+- **Validation gates**: reject configs that exceed structural limits (pipeline steps, actions, nesting).
+- **Runtime stop conditions**: stop loops/executions when item caps or timeouts are hit and log a clear reason.
+- **Counters & quotas**: track AI calls/emails/webhooks during an execution and stop before exceeding caps.
+- **Auto-pause on repeated failures**: after \(N\) consecutive failures, pause the app and notify admins (value for \(N\) should be configurable within platform bounds).
 
-<details>
-<summary>View Execution Lock Implementation</summary>
-
-```typescript
-interface ExecutionLock {
-  app_id: number;
-  tenant_id: string;
-  locked_at: Date;
-  expires_at: Date;  // Auto-expire after max execution time
-  execution_id: number;
-}
-
-class AppExecutorService {
-  async execute(app: App, context?: ExecutionContext): Promise<void> {
-    // 1. Try to acquire lock
-    const lock = await this.acquireLock(app.id, app.tenant_id);
-    if (!lock) {
-      console.log(`App ${app.id} is already running, skipping execution`);
-      return;
-    }
-
-    try {
-      // 2. Run the app
-      await this.runAppPipeline(app, context);
-    } finally {
-      // 3. Always release lock
-      await this.releaseLock(app.id, app.tenant_id);
-    }
-  }
-
-  private async acquireLock(appId: number, tenantId: string): Promise<boolean> {
-    // Use database advisory lock or Redis SETNX
-    // Returns false if app is already locked and lock hasn't expired
-  }
-}
-```
-
-</details>
-
-**Lock Configuration:**
-| Setting | Value | Description |
-|---------|-------|-------------|
-| Lock timeout | 5 minutes | Max time before lock auto-expires |
-| Stale lock recovery | On startup | Clean up any orphaned locks |
-
-### Maximum Limits
-
-These limits prevent resource exhaustion:
-
-| Limit | Value | Description |
-|-------|-------|-------------|
-| `MAX_APPS_PER_TENANT` | 50 | Maximum apps a tenant can create |
-| `MAX_PIPELINE_STEPS` | 10 | Maximum data connector steps per app |
-| `MAX_ACTIONS_PER_APP` | 20 | Maximum actions per app |
-| `MAX_FOR_EACH_ITEMS` | 1000 | Maximum items in a for_each loop |
-| `MAX_NESTED_LOOPS` | 2 | Maximum nesting depth for for_each |
-| `MAX_EXECUTION_TIME` | 5 minutes | Maximum time for single execution |
-| `MAX_AI_CALLS_PER_EXECUTION` | 100 | Maximum AI API calls per execution |
-| `MAX_EMAILS_PER_EXECUTION` | 500 | Maximum emails per single execution |
-| `MAX_CONSECUTIVE_ERRORS` | 5 | Auto-pause app after consecutive failures |
-
-### Enforcement
-
-<details>
-<summary>View Enforcement Code</summary>
-
-```typescript
-class AppValidator {
-  validate(config: AppConfig): ValidationResult {
-    const errors: string[] = [];
-
-    // Check pipeline steps
-    if (config.data_pipeline.length > MAX_PIPELINE_STEPS) {
-      errors.push(`Too many data pipeline steps (max: ${MAX_PIPELINE_STEPS})`);
-    }
-
-    // Check actions count
-    const actionCount = this.countActions(config.actions);
-    if (actionCount > MAX_ACTIONS_PER_APP) {
-      errors.push(`Too many actions (max: ${MAX_ACTIONS_PER_APP})`);
-    }
-
-    // Check for_each nesting depth
-    const nestingDepth = this.checkNestingDepth(config.actions);
-    if (nestingDepth > MAX_NESTED_LOOPS) {
-      errors.push(`for_each nesting too deep (max: ${MAX_NESTED_LOOPS})`);
-    }
-
-    return { valid: errors.length === 0, errors };
-  }
-}
-```
-
-</details>
-
-### Runtime Safeguards
-
-**For-each loop protection:**
-
-<details>
-<summary>View ForEach Protection Code</summary>
-
-```typescript
-class ForEachAction {
-  async execute(params: ForEachParams, context: ExecutionContext) {
-    const items = this.resolveItems(params.items, context);
-
-    // Enforce limit
-    if (items.length > MAX_FOR_EACH_ITEMS) {
-      throw new AppExecutionError(
-        `for_each items exceed limit (${items.length} > ${MAX_FOR_EACH_ITEMS})`
-      );
-    }
-
-    // Process with progress tracking
-    for (let i = 0; i < items.length; i++) {
-      // Check execution timeout
-      if (context.hasTimedOut()) {
-        throw new AppExecutionError('Execution timeout reached');
-      }
-
-      await this.executeNestedActions(params.do, {
-        ...context,
-        [params.as]: items[i],
-        loopIndex: i,
-      });
-    }
-  }
-}
-```
-
-</details>
-
-**Auto-pause on repeated failures:**
-
-<details>
-<summary>View Auto-Pause Code</summary>
-
-```typescript
-class AppExecutorService {
-  async handleExecutionResult(app: App, success: boolean) {
-    if (success) {
-      // Reset consecutive error count
-      await this.appService.update(app.id, { consecutive_errors: 0 });
-    } else {
-      // Increment consecutive error count
-      const newCount = app.consecutive_errors + 1;
-
-      if (newCount >= MAX_CONSECUTIVE_ERRORS) {
-        // Auto-pause the app
-        await this.appService.update(app.id, {
-          status: AppStatus.ERROR,
-          consecutive_errors: newCount,
-        });
-
-        // Notify admins
-        await this.notifyAdmins(app.tenant_id, {
-          title: 'App auto-paused',
-          message: `App "${app.name}" paused after ${newCount} consecutive failures`,
-        });
-      } else {
-        await this.appService.update(app.id, { consecutive_errors: newCount });
-      }
-    }
-  }
-}
-```
-
-</details>
+### Runtime safeguards
+- loop execution should track progress and stop when timeouts are reached
+- repeated failures should increment counters and transition app to an error/paused state
+- notify admins on auto-pauses and severe failures when configured
 
 ---
 
 ## Error Recovery & Retry
 
-### Retry Strategy
+### Retry strategy
+Failed executions can retry with exponential backoff. Retry settings are configurable per app (within platform constraints).
 
-Failed executions can be automatically retried with exponential backoff:
+### Partial execution handling
+When a loop fails mid-way:
+- the framework may support checkpointing to resume at the next item
+- or may restart from scratch depending on whether actions are idempotent
 
-```typescript
-interface RetryConfig {
-  enabled: boolean;
-  max_retries: number;       // Default: 3
-  initial_delay_ms: number;  // Default: 1000 (1 second)
-  max_delay_ms: number;      // Default: 60000 (1 minute)
-  backoff_multiplier: number; // Default: 2
-}
+### Idempotency markers
+For actions that should not repeat (like sending emails), we’ll use idempotency keys so retries do not duplicate side effects.
 
-// Delay calculation: min(initial_delay * (multiplier ^ attempt), max_delay)
-// Attempt 1: 1s, Attempt 2: 2s, Attempt 3: 4s, ...
-```
+---
 
-### Partial Execution Handling
+## Rate Limits & Quotas
 
-When an execution fails mid-way through a for_each loop:
+### Global rate limits
+System-wide limits control:
+- MCP read/write tool calls
+- app execution duration and concurrency pressure
+- AI tokens/calls and streaming capacity
 
-```typescript
-interface ExecutionCheckpoint {
-  execution_id: number;
-  last_completed_action: string;
-  last_processed_index: number;
-  partial_results: any;
-  can_resume: boolean;
-}
-```
+### Per-Tenant Rate Limits by Tier
 
-**Resume behavior:**
-- If `can_resume: true`, retry continues from `last_processed_index + 1`
-- If `can_resume: false`, entire execution restarts (actions are not idempotent)
+This table is about **plan-level quotas** (how much a tenant can do over time). It’s separate from the **per-execution operational limits** earlier in the doc.
+If your billing/plan system doesn’t already enforce these exact numbers, treat them as **placeholder targets**.
 
-### Idempotency Markers
+| Resource | Free | Starter | Pro | Enterprise |
+|----------|------|---------|-----|------------|
+| Apps | 10 | 25 | 100 | Unlimited |
+| Executions/hour | 50 | 200 | 1,000 | 5,000 |
+| AI calls/day | 100 | 500 | 2,000 | 10,000 |
+| Emails/day | 100 | 1,000 | 10,000 | 100,000 |
+| Webhooks/hour | 50 | 200 | 1,000 | 5,000 |
+| State storage keys | 50 | 200 | 1,000 | 10,000 |
+| Chat messages/hour | 20 | 50 | 200 | 1,000 |
 
-For actions that should not be repeated (like sending emails):
-
-```typescript
-interface IdempotencyKey {
-  execution_id: number;
-  action_index: number;
-  item_id: string;  // e.g., user_id for emails
-}
-
-class SendEmailAction {
-  async execute(params: SendEmailParams, context: ExecutionContext) {
-    const idempotencyKey = this.generateKey(context, params.to);
-
-    // Check if already sent in this execution
-    if (await this.wasSent(idempotencyKey)) {
-      return { skipped: true, reason: 'Already sent in this execution' };
-    }
-
-    await this.sendEmail(params);
-    await this.markSent(idempotencyKey);
-  }
-}
-```
+### Quota exceeded handling
+When quotas are exceeded:
+- log that execution was skipped due to rate limiting
+- optionally reschedule for later if configured
 
 ---
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Week 1-2)
+### Phase 1: Foundation (Week 1 (4 days))
+- MCP server skeleton: transport + auth + tenant context + tool registry + basic rate limiting
+- AI provider abstraction: adapter pattern for Claude, OpenAI, and Gemini (start with one, add others)
+- App storage: app + execution entities, persistence, and migrations
+- CRUD + logs: create/list/get/update/delete apps + fetch execution logs
+- "Hello world" end-to-end: create an app config and run it manually against a test tenant
 
-**Goal:** MCP Server + Basic App Framework
-
-| Task | Files | Description |
-|------|-------|-------------|
-| MCP Server setup | `src/mcp/*` | HTTP transport, auth guard, basic tools |
-| App entity | `src/app-framework/entities/*` | App, AppExecution tables |
-| App service | `src/app-framework/services/app.service.ts` | CRUD for apps |
-| App MCP tools | `src/mcp/tools/apps.tools.ts` | create_app, list_apps, etc. |
-| Migration | `src/database/migrations/*` | Add apps tables |
-
-**Deliverables:**
-- MCP server running at `/v1/mcp`
-- Can create/list/delete apps via MCP tools
-- Apps stored in database
-
-### Phase 2: Connectors & Actions (Week 2-3)
-
-**Goal:** Data fetching + Action execution
-
-| Task | Files | Description |
-|------|-------|-------------|
-| Data connectors | `src/app-framework/connectors/*` | users, posts, rooms, missions, etc. |
-| Action executors | `src/app-framework/actions/*` | send_email, create_post, etc. |
-| App executor | `src/app-framework/services/app-executor.service.ts` | Run app pipeline |
-| AI integration | `src/app-framework/logic/ai-generate.logic.ts` | Claude API for content gen |
-
-**Deliverables:**
-- Apps can fetch data from all connectors
-- Apps can execute all actions
-- AI content generation working
+### Phase 2: Connectors & Actions (Week 1–2)
+- Implement v1 connector set (users/rooms/posts/missions/user_missions/contributions/shopify_orders)
+- Implement v1 action set (award_xp, create_post, send_notification/send_email, basic flow control)
+- Executor runtime: pipeline → transforms → actions, with logging + stop conditions
+- AI step integration (guardrails + prompt templates + output stored in execution context)
 
 ### Phase 3: Triggers System (Week 3-4)
+- Scheduler for cron-based apps (minimum: once per minute)
+- Event listeners for platform events (user/mission/post/room/shopify v1 set)
+- Manual run support (admin clicks “Run now”)
+- Delayed triggers if feasible; otherwise document as v1.5
 
-**Goal:** Scheduled + Event-based triggers
+### Phase 4: Admin Panel UI (Week 4)
+- Chatbox UI with streaming responses + tool confirmation UI
+- Apps list + app details pages (config preview + status + last run)
+- Execution history/log viewer (search/filter by status)
+- Pause/resume/run controls
+- Basic “dry run / validate-only” path if supported by backend
 
-| Task | Files | Description |
-|------|-------|-------------|
-| Scheduler | `src/app-framework/services/app-scheduler.service.ts` | Cron-based triggers |
-| Event listener | `src/app-framework/services/app-event-listener.service.ts` | Event-based triggers |
-| Event emission | Various services | Emit events for app triggers |
-
-**Deliverables:**
-- Scheduled apps run on time
-- Event-triggered apps run on events
-- Manual trigger working
-
-### Phase 4: Admin Panel UI (Week 4-5)
-
-**Goal:** Chat interface + App management
-
-| Task | Files | Description |
-|------|-------|-------------|
-| AI Chatbox | `admin-panel/src/components/ai-apps/AIChatbox.tsx` | Chat interface |
-| App list | `admin-panel/src/components/ai-apps/AppsList.tsx` | View/manage apps |
-| App details | `admin-panel/src/components/ai-apps/AppDetails.tsx` | View app config + logs |
-| API service | `admin-panel/src/services/ai-apps.service.ts` | Backend API calls |
-
-**Deliverables:**
-- Admin can chat with AI to create apps
-- Admin can view/manage/pause apps
-- Admin can view execution logs
-
-### Phase 5: Testing & Polish (Week 5-6)
-
-**Goal:** Stability + Documentation
-
-| Task | Description |
-|------|-------------|
-| Unit tests | Test connectors, actions, executor |
-| Integration tests | Test full app execution flow |
-| Error handling | Graceful failures, retries, alerts |
-| Documentation | Admin guide, app examples |
-| Performance | Optimize for scale |
 
 ---
 
 ## Testing & Verification
 
-### Test Cases
+### Test cases (what we should be able to prove)
+- **Create app via chat flow**: AI proposes a config → confirmation (if enabled) → app is stored and appears in apps list
+- **Manual run**: “Run now” executes the pipeline/actions and writes an execution record
+- **Scheduled run**: cron trigger fires on time and doesn’t overlap if the prior run is still locked
+- **Event run**: a known platform event triggers the correct app(s) with correct tenant scoping
+- **Connector correctness**: filters/operators are validated and results are bounded/paginated
+- **Action correctness**: side effects happen once (idempotency where required), failures are reported clearly
+- **AI step persistence**: AI outputs are captured into the execution context and show up in logs
+- **Limit enforcement**: loop caps/timeouts/quota counters stop execution and log “why” (not just “failed”)
+- **Pause/resume**: paused apps don’t run; resuming restores scheduling/event triggers
+- **Observability**: logs can be queried and rendered in the admin UI without manual DB access
 
-| Test | Description | Expected Result |
-|------|-------------|-----------------|
-| Create app via MCP | AI calls `create_app` tool | App saved to database |
-| Scheduled trigger | App with cron trigger | Runs at scheduled time |
-| Event trigger | App with `post.created` trigger | Runs when post created |
-| Data connector | Fetch users with filter | Returns filtered users |
-| Send email action | App sends email | Email delivered via SendGrid |
-| AI generate | App generates content | AI returns text |
-| For each loop | App processes 100 users | All 100 processed |
-| Error handling | Connector fails | Error logged, admin notified |
-| App pause/resume | Admin pauses app | App stops running |
-| Execution logs | App runs | Logs saved with details |
-
-### Manual Testing Checklist
-
-- [ ] Create "Weekly Digest" app via chatbox
-- [ ] Verify app appears in app list
-- [ ] Manually trigger app, verify emails sent
-- [ ] Create "Post Detector" app
-- [ ] Create a test post, verify it's analyzed
-- [ ] Pause an app, verify it stops running
-- [ ] View execution logs
-- [ ] Delete an app
+### Manual testing checklist (conceptual)
+- create a “Weekly Digest” via chatbox and verify it appears
+- run it manually and verify outputs (emails/logs)
+- create a “Post Detector” and test with a new post event
+- pause an app and verify it stops running
+- inspect execution logs
+- delete an app and verify it disappears and stops executing
 
 ---
 
@@ -3919,784 +1474,96 @@ class SendEmailAction {
 | Code | Meaning | Resolution |
 |------|---------|------------|
 | E001 | Invalid configuration | Fix schema errors shown in validation |
-| E002 | Rate limit exceeded | Wait for reset or upgrade tier |
-| E003 | Execution timeout | Break into smaller apps or reduce loop items |
+| E002 | Rate limit exceeded | Wait or upgrade tier |
+| E003 | Execution timeout | Break into smaller apps |
 | E004 | Connector error | Check filter syntax and data availability |
 | E005 | Action failed | Review action parameters and permissions |
 | E006 | Variable not found | Ensure variable is defined in scope |
 | E007 | External service error | Check webhook URL and service status |
-| E008 | Approval timeout | Approval request expired after 7 days |
-| E009 | App paused | Too many consecutive failures; fix issues and resume |
-| E010 | Tenant quota exceeded | Upgrade plan or reduce usage |
 
 ---
 
 ## Key Reference Files
 
-### Backend (NestJS)
+These are the existing codebase patterns to follow (module, auth guard, multi-tenancy, email integration), plus the target directories where the new work will land:
 
-| File | Purpose |
-|------|---------|
-| `src/zapier/zapier.module.ts` | Module pattern to follow |
-| `src/zapier/zapier.service.ts` | Data query patterns |
-| `src/zapier/guards/api-token.guard.ts` | Auth guard pattern |
-| `src/klaviyo/klaviyo.service.ts` | External API integration pattern |
-| `src/tenancy/tenancy.module.ts` | Multi-tenant connection pattern |
-| `src/mail/mail.service.ts` | SendGrid email sending |
-| `src/setting/entities/setting.entity.ts` | Add mcp_api_token column |
-
-### Admin Panel (React)
-
-| File | Purpose |
-|------|---------|
-| `src/components/*` | Component patterns |
-| `src/services/*` | API service patterns |
-| `src/pages/*` | Page structure |
+- Backend (NestJS): module patterns, auth guard patterns, tenancy patterns, mail sending patterns, settings storage for tokens.
+- Admin panel (React): component and service patterns for pages, API clients, and streaming UI.
 
 ---
 
-## Rate Limits & Quotas
+## Things we need to get right (security & implementation notes)
 
-### Global Rate Limits (Environment Variables)
+This section captures the stuff that *must* work correctly before we ship. It's easy to get excited about features, but these are the guardrails that keep the system safe and trustworthy.
 
-```bash
-# MCP Server
-MCP_ENABLED=true
-MCP_RATE_LIMIT_READ=500     # Read operations per hour (global)
-MCP_RATE_LIMIT_WRITE=100    # Write operations per hour (global)
+### The big ones (don't skip these)
 
-# App Framework
-APP_FRAMEWORK_ENABLED=true
-APP_MAX_PER_TENANT=50
-APP_EXECUTION_TIMEOUT=300000  # 5 minutes
+**1. AI output validation**
+The AI generates JSON configs, but we can't just trust them blindly. Before storing any config:
+- Run it through JSON Schema validation (use ajv or similar)
+- Sanitize all string fields—a user could set their name to something nasty
+- Check that connector/action types actually exist in our registry
+- Make sure numeric limits are actually numbers, not strings pretending to be numbers
 
-# AI Service (Claude)
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
-AI_MAX_TOKENS=2000
-AI_RATE_LIMIT_PER_MINUTE=60  # Global rate limit
-```
+**2. Tenant context in async execution**
+This one's subtle but critical. When an app runs from a cron job or event trigger, there's no HTTP request to carry the tenant context. We already solved this in the Klaviyo queue—each execution needs to explicitly carry `tenantDbName` and use `getConnection(tenantDbName)`, not the request-scoped connection.
 
-### Per-Tenant Rate Limits
+**3. Idempotency for side effects**
+If an execution retries (network blip, timeout, etc.), we can't award XP twice or send the same email twice. Each action needs an idempotency key like `${executionId}:${actionIndex}`. Check Redis before executing; cache the result after.
 
-Each tenant has individual rate limits to ensure fair resource allocation:
+**4. Webhook security**
+Allowlisting domains isn't enough. We also need to:
+- Check the resolved IP isn't a private range (10.x, 172.16.x, 192.168.x, localhost)
+- Don't follow redirects to internal hosts
+- Enforce response size limits (1MB max)
+- Set strict timeouts (10s)
 
-```typescript
-interface TenantRateLimits {
-  tenant_id: string;
+**5. AI provider keys**
+If tenants bring their own keys: encrypt them with KMS, never log them, never include them in prompts.
+If we use pooled keys: meter usage per tenant for billing, enforce per-tenant rate limits.
 
-  // AI API limits
-  ai_calls_per_hour: number;        // Default: 500
-  ai_calls_per_day: number;         // Default: 5000
-  ai_tokens_per_day: number;        // Default: 1,000,000
+### Worth getting right before launch
 
-  // App execution limits
-  app_executions_per_hour: number;  // Default: 100
-  emails_per_day: number;           // Default: 10,000
+- **Event trigger throttling**: If one event triggers 100 apps, don't run them all at once. Queue them, run 10 at a time.
+- **App version history**: Store previous configs so admins can rollback if they break something.
+- **Prompt injection defense**: When interpolating `{{user.name}}`, sanitize it. Someone will try "Ignore all instructions and..." eventually.
+- **Mandatory dry run**: New apps should run in preview mode before going active. Show what *would* happen without actually doing it.
+- **Execution locking**: If a cron app is still running when the next trigger fires, skip the new run. Use Redis locks with TTL matching the execution timeout.
 
-  // Chatbox limits
-  chatbox_messages_per_hour: number; // Default: 50
+### Leveraging what we already have
 
-  // Override timestamp (for temporary increases)
-  override_until?: Date;
-}
-```
+Good news: we don't need to build everything from scratch. The codebase already has patterns we can reuse:
 
-### Rate Limit Tiers
+| What we need | What we have | Where |
+|--------------|--------------|-------|
+| Tenant isolation | TenantMiddleware + request-scoped connection | `src/tenancy/` |
+| Event system | EventEmitterModule + Klaviyo events | `src/klaviyo/events/` |
+| Cron queue pattern | KlaviyoQueueService retry logic | `src/klaviyo/klaviyo-queue.service.ts` |
+| Role permissions | 25+ granular permissions in Role entity | `src/role/role.service.ts` |
+| Redis | RedisService already configured | `src/redis/` |
 
-| Resource | Free | Starter | Pro | Enterprise |
-|----------|------|---------|-----|------------|
-| Apps | 10 | 25 | 100 | Unlimited |
-| Executions/hour | 50 | 200 | 1,000 | 5,000 |
-| AI calls/day | 100 | 500 | 2,000 | 10,000 |
-| AI tokens/day | 100,000 | 500,000 | 1,000,000 | Custom |
-| Emails/day | 100 | 1,000 | 10,000 | 100,000 |
-| Webhooks/hour | 50 | 200 | 1,000 | 5,000 |
-| State storage keys | 50 | 200 | 1,000 | 10,000 |
-| Chat messages/hour | 20 | 50 | 200 | 1,000 |
+The MCP tools should map to existing role permissions: `create_app` → `ai_admin`, `award_xp` → `reward_rewards`, `create_post` → `community_rooms`, etc.
 
-### State Storage Limits
+### Rough effort estimate
 
-Apps can store persistent key-value data for tracking state between executions.
+| Category | Items | Effort |
+|----------|-------|--------|
+| Must-have security | Validation, tenant context, idempotency, webhook safety, key encryption | ~7 days |
+| Should-have | Throttling, rollback, dry run, locking | ~3 days |
+| Total before v1 | | ~10 days |
 
-| Limit | Value | Description |
-|-------|-------|-------------|
-| Max keys per app | Tier-based (50-10,000) | See tier table above |
-| Max value size | 10 KB | Per individual value |
-| Key name length | 255 chars | Alphanumeric and underscores |
-| TTL (time-to-live) | Optional | Auto-delete after N days |
-
-**Use Cases:**
-- Store "last_leaderboard_positions" to detect rank changes
-- Track "processed_mission_ids" to avoid duplicate notifications
-- Save "streak_reminder_sent" to prevent multiple reminders per day
-- Cache "campaign_stats" for dashboard widgets
-
-### Rate Limit Enforcement
-
-<details>
-<summary>View Rate Limit Service</summary>
-
-```typescript
-class RateLimitService {
-  async checkLimit(
-    tenant_id: string,
-    limit_type: 'ai_calls' | 'executions' | 'emails' | 'chatbox'
-  ): Promise<{ allowed: boolean; remaining: number; reset_at: Date }> {
-    const limits = await this.getTenantLimits(tenant_id);
-    const usage = await this.getUsage(tenant_id, limit_type);
-
-    const limit = limits[`${limit_type}_per_hour`];
-    const remaining = Math.max(0, limit - usage.count);
-
-    return {
-      allowed: remaining > 0,
-      remaining,
-      reset_at: usage.window_end,
-    };
-  }
-
-  async incrementUsage(tenant_id: string, limit_type: string): Promise<void> {
-    // Use Redis INCR with TTL for sliding window
-    const key = `rate_limit:${tenant_id}:${limit_type}:${this.getCurrentWindow()}`;
-    await this.redis.incr(key);
-    await this.redis.expire(key, 3600);  // 1 hour TTL
-  }
-}
-```
-
-</details>
-
-### Rate Limit Response Headers
-
-API responses include rate limit info:
-
-```
-X-RateLimit-Limit: 500
-X-RateLimit-Remaining: 342
-X-RateLimit-Reset: 1706540400
-```
-
-### Quota Exceeded Handling
-
-When a tenant exceeds their quota:
-
-<details>
-<summary>View Quota Exceeded Handler</summary>
-
-```typescript
-class AppExecutorService {
-  async execute(app: App, context: ExecutionContext) {
-    const rateCheck = await this.rateLimitService.checkLimit(
-      app.tenant_id,
-      'ai_calls'
-    );
-
-    if (!rateCheck.allowed) {
-      // Log the skip
-      await this.logExecution(app, {
-        status: 'RATE_LIMITED',
-        message: `Rate limit exceeded. Resets at ${rateCheck.reset_at}`,
-      });
-
-      // Optionally reschedule for later
-      if (app.config.settings?.reschedule_on_rate_limit) {
-        await this.rescheduleExecution(app, rateCheck.reset_at);
-      }
-
-      return;
-    }
-
-    // Proceed with execution
-    await this.runAppPipeline(app, context);
-  }
-}
-```
-
-</details>
+This isn't meant to slow us down—it's meant to avoid the "oh no" moments after launch.
 
 ---
 
 ## Summary
 
-This system enables **AI to create micro-apps on the fly** for Decommerce tenants:
+This system enables **AI-generated micro-apps** on Decommerce by:
+- letting admins request automations in natural language,
+- giving them a choice of AI provider (Claude, ChatGPT, Gemini, etc.),
+- having the chosen AI output a structured app configuration,
+- storing and running it in a controlled runtime with connectors/actions/triggers,
+- and enforcing isolation, validation, execution limits, retries, and audit logs.
+
+The provider-agnostic design means we're not betting on a single AI vendor. As new models emerge or existing ones improve, admins can switch without any changes to their existing apps.
 
-1. **Admin describes** what they want in natural language via chatbox
-2. **AI generates** an app configuration (JSON)
-3. **App Framework** stores and runs the app automatically
-4. **35+ app types** possible across email, content, engagement, analytics, moderation, Shopify
-
-**Key architectural decisions:**
-
-- **Configuration-based apps** — AI generates JSON config, not code (safe, predictable)
-- **Building blocks approach** — Connectors + Actions that AI combines
-- **Event-driven architecture** — Leverages existing NestJS EventEmitter
-- **Multi-tenant isolation** — Apps scoped to tenant database
-
-**Implementation:** 5-6 weeks across MCP Server, App Framework, Triggers, Admin UI, and Testing.
-
----
-
-## Detailed Implementation Plan
-
-This section provides the comprehensive technical implementation plan with specific file structures, database migrations, and verification criteria.
-
-### Implementation Phases Overview
-
-| Phase | Duration | Focus |
-|-------|----------|-------|
-| **Phase 1: Foundation** | Days 1-5 | MCP server, AI provider abstraction, app storage |
-| **Phase 2: Connectors & Actions** | Days 6-12 | Data connectors, action executors, interpolation |
-| **Phase 3: Triggers** | Days 13-18 | Scheduler, event listeners, manual triggers |
-| **Phase 4: Admin Panel** | Days 19-24 | Chat UI, apps management |
-| **Phase 5: Testing & Security** | Days 25-30 | Validation, rate limiting, security hardening |
-
----
-
-### Phase 1: Foundation (Days 1-5)
-
-#### 1.1 MCP Module Structure
-
-```
-src/mcp/
-├── mcp.module.ts
-├── mcp.controller.ts
-├── mcp-server.service.ts           # Tool registry & execution
-├── mcp-context.service.ts          # Per-request tenant context
-├── auth/
-│   └── mcp-api-key.guard.ts        # Pattern: src/zapier/guards/api-token.guard.ts
-├── guards/
-│   └── mcp-rate-limit.guard.ts     # Pattern: src/zapier/guards/zapier-rate-limit.guard.ts
-├── tools/
-│   ├── tool.interface.ts
-│   ├── tool.registry.ts
-│   └── apps.tools.ts               # create_app, list_apps, update_app, etc.
-├── resources/
-│   ├── platform-schema.resource.ts
-│   └── app-templates.resource.ts
-└── dto/
-    └── mcp-request.dto.ts
-```
-
-#### 1.2 AI Provider Abstraction
-
-```
-src/ai-providers/
-├── ai-providers.module.ts
-├── ai-providers.service.ts         # Factory for provider selection
-├── interfaces/
-│   └── ai-provider.interface.ts    # Common interface
-├── adapters/
-│   ├── claude.adapter.ts           # Claude tool_use format
-│   ├── openai.adapter.ts           # OpenAI function calling
-│   └── gemini.adapter.ts           # Gemini format
-└── dto/
-    └── chat-request.dto.ts
-```
-
-#### 1.3 App Framework Module
-
-```
-src/app-framework/
-├── app-framework.module.ts
-├── entities/
-│   ├── app.entity.ts               # App configuration storage
-│   ├── app-execution.entity.ts     # Execution history
-│   ├── app-state.entity.ts         # Per-app key-value state
-│   └── app-approval.entity.ts      # Pending approvals
-├── services/
-│   ├── app.service.ts              # CRUD operations
-│   ├── app-executor.service.ts     # Runs app logic
-│   └── app-validator.service.ts    # Config validation
-└── dto/
-    ├── create-app.dto.ts
-    └── app-config.dto.ts
-```
-
-#### 1.4 AI Apps API
-
-```
-src/ai-apps/
-├── ai-apps.module.ts
-├── ai-apps.controller.ts           # SSE streaming chat endpoint
-├── ai-apps.service.ts              # Orchestrates AI + MCP
-├── entities/
-│   └── conversation.entity.ts
-└── services/
-    ├── conversation.service.ts
-    └── tool-confirmation.service.ts
-```
-
-#### Phase 1 Deliverables
-
-| Deliverable | Success Criteria |
-|-------------|------------------|
-| MCP Module | Module loads, registers tools |
-| API Key Guard | Validates `mcp_{uuid}` tokens |
-| App Entity | Migrations run successfully |
-| App Service | CRUD operations work |
-| AI Provider | Claude adapter works |
-| Chat Controller | SSE streaming works |
-| **E2E Test** | Create app via chat, see it in list |
-
----
-
-### Phase 2: Connectors & Actions (Days 6-12)
-
-#### 2.1 Connector Framework
-
-```
-src/app-framework/connectors/
-├── connector.interface.ts
-├── connector.registry.ts
-├── users.connector.ts              # Wraps UsersService
-├── posts.connector.ts              # Wraps PostsService
-├── rooms.connector.ts              # Wraps RoomService
-├── missions.connector.ts           # Wraps MissionsService
-├── user-missions.connector.ts
-├── contributions.connector.ts      # Wraps ContributionService
-├── reward-claims.connector.ts
-├── shopify-orders.connector.ts     # Wraps ShopifyService
-├── analytics.connector.ts
-└── app-state.connector.ts
-```
-
-#### 2.2 Action Executors
-
-```
-src/app-framework/actions/
-├── action.interface.ts
-├── action.registry.ts
-├── communication/
-│   ├── send-email.action.ts        # Uses SendgridService
-│   ├── send-notification.action.ts
-│   └── send-push.action.ts
-├── content/
-│   ├── create-post.action.ts       # Uses PostsService
-│   └── flag-content.action.ts
-├── users/
-│   ├── award-xp.action.ts          # Uses ContributionService
-│   └── award-badge.action.ts
-├── flow-control/
-│   ├── for-each.action.ts
-│   ├── condition.action.ts
-│   └── emit-event.action.ts
-├── ai/
-│   ├── ai-analyze.action.ts
-│   └── ai-generate.action.ts
-├── state/
-│   ├── set-state.action.ts
-│   └── get-state.action.ts
-└── integrations/
-    ├── webhook.action.ts
-    └── klaviyo.action.ts           # Uses KlaviyoService
-```
-
-#### 2.3 Variable Interpolation
-
-```
-src/app-framework/interpolation/
-├── interpolation.service.ts
-└── filters/
-    ├── string.filters.ts           # uppercase, lowercase, truncate
-    ├── date.filters.ts             # date formatting
-    ├── number.filters.ts           # number formatting
-    └── array.filters.ts            # count, join, first, last
-```
-
-#### Phase 2 Deliverables
-
-| Deliverable | Success Criteria |
-|-------------|------------------|
-| Users Connector | Filters work correctly |
-| Missions Connector | Status filters work |
-| Send Email Action | Emails delivered via SendGrid |
-| Award XP Action | XP awarded correctly |
-| For Each Action | Loops execute |
-| Interpolation Service | Variables resolve |
-| App Executor | Pipeline + actions run |
-| **Integration Test** | Run "Weekly Digest" app manually |
-
----
-
-### Phase 3: Triggers System (Days 13-18)
-
-#### 3.1 Scheduler Service
-
-```
-src/app-framework/services/app-scheduler.service.ts
-```
-
-Pattern: `src/klaviyo/klaviyo-queue.service.ts`
-
-- Load scheduled apps on startup
-- Create CronJob for each app
-- Handle app updates (reschedule)
-- Execution lock with Redis TTL
-
-#### 3.2 Event Listener Service
-
-```
-src/app-framework/events/
-├── app-events.ts                   # Event definitions
-├── app-event-listener.ts           # @OnEvent handlers
-└── event-mapper.service.ts         # Maps platform events
-```
-
-Pattern: `src/klaviyo/listeners/klaviyo.listener.ts`
-
-#### 3.3 Event Emission Points (Modify Existing)
-
-| Service | Event | File |
-|---------|-------|------|
-| UsersService | user.created | `src/users/users.service.ts` |
-| PostsService | post.created | `src/posts/posts.service.ts` |
-| MissionsService | mission.completed | `src/missions/services/missions.service.ts` |
-| ContributionService | reward.claimed | `src/reward/services/contribution.service.ts` |
-| ShopifyService | shopify.order.* | `src/shopify/shopify.service.ts` |
-
-#### Phase 3 Deliverables
-
-| Deliverable | Success Criteria |
-|-------------|------------------|
-| Scheduler Service | Cron jobs execute on time |
-| Event Listener | Events trigger apps |
-| Event Definitions | All events defined |
-| User Events | user.created emits |
-| Mission Events | mission.completed emits |
-| Manual Run Tool | run_app tool works |
-| **Integration Test** | Scheduled app fires at correct time |
-| **Integration Test** | Event trigger fires app |
-
----
-
-### Phase 4: Admin Panel (Days 19-24)
-
-#### 4.1 Frontend Structure
-
-```
-admin-panel/src/
-├── pages/ai-apps/
-│   ├── index.tsx                   # Main AI Apps page
-│   ├── [appId].tsx                 # App detail page
-│   └── chat.tsx                    # Full-screen chat
-├── components/ai-apps/
-│   ├── AIChatbox.tsx               # Main chat interface
-│   ├── ChatMessage.tsx             # Individual message
-│   ├── ProviderSelector.tsx        # Claude/OpenAI/Gemini
-│   ├── AppConfirmation.tsx         # Tool confirmation modal
-│   ├── AppsList.tsx                # Grid of apps
-│   ├── AppCard.tsx                 # Single app card
-│   ├── AppDetails.tsx              # App detail view
-│   └── AppLogs.tsx                 # Execution logs
-├── hooks/ai-apps/
-│   ├── useAIChat.ts                # SSE streaming hook
-│   ├── useApps.ts                  # Apps CRUD hooks
-│   └── useAppLogs.ts               # Logs fetching
-└── services/
-    └── ai-apps.service.ts          # API client
-```
-
-#### Phase 4 Deliverables
-
-| Deliverable | Success Criteria |
-|-------------|------------------|
-| AI Chatbox | Chat UI renders |
-| SSE Hook | Streaming works |
-| Provider Selector | Can switch providers |
-| Tool Confirmation | Modal works |
-| Apps List | Apps display |
-| App Details | Config and logs show |
-| **E2E Test** | Create app via chat, see in list, run it |
-
----
-
-### Phase 5: Testing & Security (Days 25-30)
-
-#### 5.1 Test Structure
-
-```
-tests/
-├── unit/
-│   ├── app-framework/
-│   │   ├── connectors/*.spec.ts
-│   │   ├── actions/*.spec.ts
-│   │   └── services/*.spec.ts
-│   ├── mcp/
-│   │   └── tools/*.spec.ts
-│   └── ai-providers/
-│       └── *.adapter.spec.ts
-└── integration/
-    ├── app-execution.spec.ts
-    ├── event-trigger.spec.ts
-    └── chat-flow.spec.ts
-```
-
-#### 5.2 Security Hardening
-
-| Security Item | Implementation |
-|---------------|----------------|
-| **AI Output Validation** | JSON Schema (ajv), sanitize strings, validate types |
-| **Webhook SSRF Protection** | Block private IPs, DNS rebinding check, domain allowlist |
-| **Idempotency** | Redis keys per execution + action index |
-| **Rate Limiting** | Redis counters per tenant per resource |
-| **Execution Locking** | Redis NX with TTL |
-| **Auto-Pause** | After 5 consecutive errors |
-| **Quota Enforcement** | Per-tier limits (executions/hour, emails/day, AI calls/day) |
-
-#### Phase 5 Deliverables
-
-| Deliverable | Success Criteria |
-|-------------|------------------|
-| Unit Tests | 90%+ coverage |
-| Integration Tests | Full flows pass |
-| Config Validator | Rejects invalid configs |
-| Webhook Security | Blocks internal URLs |
-| Idempotency Service | No duplicate actions |
-| Quota Service | Enforces limits |
-| Auto-Pause | Pauses after 5 errors |
-| **Security Review** | All OWASP checks pass |
-
----
-
-### Database Migrations
-
-#### Migration 1: Core Tables
-
-```sql
-CREATE TYPE app_status AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'ERROR');
-CREATE TYPE execution_status AS ENUM ('RUNNING', 'SUCCESS', 'FAILED');
-
-CREATE TABLE community.apps (
-    id SERIAL PRIMARY KEY,
-    tenant_id VARCHAR(255) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    config JSONB NOT NULL,
-    version INTEGER DEFAULT 1,
-    previous_configs JSONB,
-    status app_status DEFAULT 'ACTIVE',
-    created_by INTEGER NOT NULL,
-    updated_by INTEGER,
-    last_run_at TIMESTAMP,
-    run_count INTEGER DEFAULT 0,
-    error_count INTEGER DEFAULT 0,
-    consecutive_errors INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    deleted_at TIMESTAMP
-);
-
-CREATE INDEX idx_apps_tenant_status ON community.apps(tenant_id, status);
-CREATE INDEX idx_apps_trigger_type ON community.apps((config->'trigger'->>'type'));
-
-CREATE TABLE community.app_executions (
-    id SERIAL PRIMARY KEY,
-    app_id INTEGER REFERENCES community.apps(id),
-    status execution_status NOT NULL,
-    started_at TIMESTAMP NOT NULL,
-    completed_at TIMESTAMP,
-    items_processed INTEGER,
-    result JSONB,
-    error_message TEXT,
-    duration_ms INTEGER,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE community.app_state (
-    id SERIAL PRIMARY KEY,
-    app_id INTEGER REFERENCES community.apps(id),
-    key VARCHAR(255) NOT NULL,
-    value JSONB NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(app_id, key)
-);
-
-CREATE TABLE community.ai_conversations (
-    id VARCHAR(36) PRIMARY KEY,
-    tenant_id VARCHAR(255) NOT NULL,
-    user_id INTEGER NOT NULL,
-    provider VARCHAR(50) DEFAULT 'claude',
-    messages JSONB DEFAULT '[]',
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-```
-
----
-
-### Critical Codebase Files for Reference
-
-| Purpose | File Path |
-|---------|-----------|
-| **Queue/Retry Pattern** | `src/klaviyo/klaviyo-queue.service.ts` |
-| **Event Listener Pattern** | `src/klaviyo/listeners/klaviyo.listener.ts` |
-| **Event Definitions** | `src/klaviyo/events/klaviyo.events.ts` |
-| **API Token Auth** | `src/zapier/guards/api-token.guard.ts` |
-| **Rate Limiting** | `src/zapier/guards/zapier-rate-limit.guard.ts` |
-| **Multi-Tenancy** | `src/tenancy/tenancy.module.ts` |
-| **Entity Pattern** | `src/klaviyo/entities/klaviyo-event-queue.entity.ts` |
-
----
-
-### Module Dependencies
-
-```
-AppModule
-├── McpModule
-│   ├── TenancyModule (existing)
-│   ├── RedisModule (existing)
-│   └── AppFrameworkModule
-├── AiProvidersModule
-│   └── ConfigModule (existing)
-├── AppFrameworkModule
-│   ├── MailModule (existing)
-│   ├── UsersModule (existing)
-│   ├── MissionsModule (existing)
-│   ├── RewardModule (existing)
-│   └── KlaviyoModule (existing)
-└── AiAppsModule
-    ├── AiProvidersModule
-    ├── McpModule
-    └── AppFrameworkModule
-```
-
----
-
-### Verification Plan
-
-#### End-to-End Test Scenarios
-
-1. **Create App via Chat**
-   - Admin types "Create an app that awards XP when missions are completed"
-   - AI generates config → confirmation modal → app created
-   - App appears in apps list with ACTIVE status
-
-2. **Scheduled Execution**
-   - Create app with cron trigger "0 9 * * MON"
-   - Wait for Monday 9 AM (or mock)
-   - Verify execution log shows SUCCESS
-
-3. **Event Trigger**
-   - Create app triggered by mission.completed
-   - Complete a mission
-   - Verify app executed within 5 seconds
-
-4. **Connector + Action Pipeline**
-   - Create app: fetch users with XP > 1000 → send email
-   - Run manually
-   - Verify emails sent to correct users
-
-5. **Error Handling**
-   - Create app with invalid webhook URL
-   - Run app → should fail
-   - After 5 failures → should auto-pause
-
----
-
-## Critical Security Issues (Must Fix Before v1)
-
-### 1. AI Output Validation Layer
-
-**Risk:** AI-generated configs executed without structural verification
-
-**Fix Required:**
-```typescript
-// src/mcp/validators/app-config.validator.ts
-@Injectable()
-export class AppConfigValidator {
-  validate(rawConfig: unknown): ValidatedAppConfig {
-    // 1. JSON Schema validation (ajv)
-    // 2. Sanitize all string fields
-    // 3. Validate connector/action types against registry
-    // 4. Check variable interpolation syntax (no code injection)
-    // 5. Enforce numeric limits with parseInt/parseFloat
-  }
-}
-```
-
-### 2. Tenant Context in Async Execution
-
-**Risk:** Cross-tenant data access if tenant context lost mid-execution
-
-**Fix Required:**
-```typescript
-// Every micro-app execution MUST carry tenant explicitly
-interface AppExecutionContext {
-  tenantDbName: string;      // From app.tenant_id lookup
-  appId: string;
-  executionId: string;
-  triggeredBy: 'cron' | 'event' | 'manual';
-}
-// Use getConnection(tenantDbName) NOT request-scoped CONNECTION
-```
-
-### 3. Idempotency Keys for Actions
-
-**Risk:** Duplicate XP awards, duplicate emails on retry
-
-**Fix Required:**
-```typescript
-abstract class BaseActionExecutor {
-  async execute(params, ctx: ExecutionContext): Promise<ActionResult> {
-    const idempotencyKey = `${ctx.executionId}:${ctx.actionIndex}`;
-    const existing = await this.redis.get(`idem:${idempotencyKey}`);
-    if (existing) return JSON.parse(existing);
-
-    const result = await this.doExecute(params, ctx);
-    await this.redis.setex(`idem:${idempotencyKey}`, 86400, JSON.stringify(result));
-    return result;
-  }
-}
-```
-
-### 4. Webhook SSRF Protection
-
-**Risk:** SSRF attacks via webhook_call action
-
-**Fix Required:**
-```typescript
-private readonly BLOCKED_RANGES = [
-  '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16',
-  '127.0.0.0/8', '169.254.0.0/16', '::1/128'
-];
-// Check resolved IP against BLOCKED_RANGES before request
-```
-
-### 5. AI Provider Keys Security
-
-**Risk:** Key exposure in multi-tenant context; billing fraud if BYOK
-
-**Fix Required:**
-- **Pooled keys:** Per-tenant usage metering + billing + rate limiting
-- **BYOK:** Keys encrypted with KMS; never sent to AI in prompts
-- Store `ai_api_key_encrypted` in tenant settings
-- Decrypt at runtime only
-
----
-
-## Must-Fix Priority Summary
-
-| Priority | Issue | Effort |
-|----------|-------|--------|
-| 🔴 P0 | AI output validation layer | 2 days |
-| 🔴 P0 | Tenant context in async execution | 1 day |
-| 🔴 P0 | Idempotency keys | 1 day |
-| 🔴 P0 | Webhook SSRF protection | 1 day |
-| 🔴 P0 | AI key encryption + metering | 2 days |
-| 🟡 P1 | Event trigger throttling | 0.5 day |
-| 🟡 P1 | App version rollback | 0.5 day |
-| 🟡 P1 | Prompt injection sanitization | 0.5 day |
-| 🟡 P1 | Mandatory dry run | 1 day |
-| 🟡 P1 | Execution lock with TTL | 0.5 day |
-
-**Total Critical Path: ~10 engineering days before v1 launch**
-
----
-
-**Document Version**: 2.0
-**Last Updated**: January 2025
-**Major Changes**:
-- v2.0: Complete rewrite for AI-generated micro-apps architecture + Detailed Implementation Plan
-- v1.0: Initial MCP connector specification

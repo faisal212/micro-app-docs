@@ -1377,37 +1377,32 @@ When quotas are exceeded:
 
 ## Implementation Phases
 
-### Phase 1: Foundation (Week 1–2)
+### Phase 1: Foundation (Week 1 (4 days))
 - MCP server skeleton: transport + auth + tenant context + tool registry + basic rate limiting
 - AI provider abstraction: adapter pattern for Claude, OpenAI, and Gemini (start with one, add others)
 - App storage: app + execution entities, persistence, and migrations
 - CRUD + logs: create/list/get/update/delete apps + fetch execution logs
 - "Hello world" end-to-end: create an app config and run it manually against a test tenant
 
-### Phase 2: Connectors & Actions (Week 2–3)
+### Phase 2: Connectors & Actions (Week 1–2)
 - Implement v1 connector set (users/rooms/posts/missions/user_missions/contributions/shopify_orders)
 - Implement v1 action set (award_xp, create_post, send_notification/send_email, basic flow control)
 - Executor runtime: pipeline → transforms → actions, with logging + stop conditions
 - AI step integration (guardrails + prompt templates + output stored in execution context)
 
-### Phase 3: Triggers System (Week 3–4)
+### Phase 3: Triggers System (Week 3-4)
 - Scheduler for cron-based apps (minimum: once per minute)
 - Event listeners for platform events (user/mission/post/room/shopify v1 set)
 - Manual run support (admin clicks “Run now”)
 - Delayed triggers if feasible; otherwise document as v1.5
 
-### Phase 4: Admin Panel UI (Week 4–5)
+### Phase 4: Admin Panel UI (Week 4)
 - Chatbox UI with streaming responses + tool confirmation UI
 - Apps list + app details pages (config preview + status + last run)
 - Execution history/log viewer (search/filter by status)
 - Pause/resume/run controls
 - Basic “dry run / validate-only” path if supported by backend
 
-### Phase 5: Testing & Polish (Week 5–6)
-- Unit tests for: validation, v1 connectors/actions, execution stop conditions
-- Integration tests: event trigger → pipeline → action side effect (in staging)
-- Error handling: retries, idempotency where needed, auto-pause + notifications
-- Docs + tuning: performance, quotas, and operational dashboards
 
 ---
 
